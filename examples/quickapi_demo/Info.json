@@ -1,0 +1,25 @@
+{
+  "pkgId": "lzup.lua.quickapidemo",
+  "name": "QuickAPIDemo",
+  "author": "lzup333",
+  "version": "1.0.0",
+  "versionCode": 20261011,
+  "brieflyDescribe": "quickapi 最小示例",
+  "description": "演示用「命名空间 + 类名 + 成员名」直接挂钩子",
+  "features": [],
+  "sizeCategory": "TINY",
+  "targetGameVersion": "1.4.5.8",
+  "minGameVersion": "1.4.5.8",
+  "maxGameVersion": "1.4.5.8",
+  "support": {
+    "android": { "arm64": true, "arm": true, "x64": false, "x86": false },
+    "windows": { "arm64": false, "arm": false, "x64": true, "x86": true },
+    "linux": { "arm64": false, "arm": false, "x64": true, "x86": true },
+    "mac": { "arm64": false, "arm": false, "x64": false, "x86": false },
+    "ios": { "arm64": false, "arm": false, "x64": false, "x86": false }
+  },
+  "dependence": [],
+  "conflicts": [],
+  "experimental": false,
+  "deprecated": false
+}
