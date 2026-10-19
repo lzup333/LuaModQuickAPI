@@ -465,7 +465,9 @@ function q.projectile_move(p, opts)
     local vx, vy = vec.get("Terraria", "Projectile", "velocity", p)
     vec.set("Terraria", "Projectile", "position", p, px + vx, py + vy)
     if opts.face_velocity ~= false then
-        vec.set("Terraria", "Projectile", "rotation", p, math.atan(vy, vx) + math.pi / 2)
+        -- rotation 是 float（不是 Vector2），必须用 set_field_value
+        q.set_field_value("Terraria", "Projectile", "rotation", p,
+                math.atan(vy, vx) + math.pi / 2, "float")
     end
     return px + vx, py + vy
 end
