@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.0.0"
+q.version = "1.1.0"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -301,6 +301,236 @@ end
 -- mod.quickapi.install_hook_postfix(ns, class, method, fn[, opts])
 function q.install_hook_postfix(ns, class, method, fn, opts)
     return q.install_hook(ns, class, method, with_callback(opts, "postfix", fn))
+end
+
+-- ============================ 注册：物品 / 弹幕 ============================
+--
+-- 写法刻意贴近泰拉瑞亚源码 Item.SetDefaults / Projectile.SetDefaults：
+-- 属性直接平铺在表里（damage = 25, useStyle = 1, ...），不再包一层 defaults。
+--
+--   mod.quickapi.register_item{
+--       name = "my_sword",
+--       texture = "sword.png",
+--       tooltip = true,
+--       sacrifice = 1,
+--       prefixes = "sword",
+--
+--       damage = 25, useTime = 20, useStyle = 1, autoReuse = true,
+--       width = 40, height = 40, melee = true, rare = 2, maxStack = 1,
+--
+--       language = { en = {...}, zh = {...} },
+--       recipe   = { result = 1, materials = {...}, station = 18 },
+--   }
+
+-- 注册表元字段：这些不是 Item / Projectile 的字段，需要原样交给 LuaLoader
+local ITEM_META = {
+    name = true, texture = true, tooltip = true, sacrifice = true,
+    defaults = true, prefixes = true, can_use = true, language = true, recipe = true,
+}
+
+local PROJECTILE_META = {
+    name = true, texture = true, defaults = true, ai = true, no_ai = true,
+}
+
+-- 字段代理：instance.damage = 25 直接写到底层对象（源码风格的关键）。
+-- 用于 defaults 函数：拿到 proxy 后按 Item.SetDefaults 的写法逐行赋值。
+local function field_proxy(ns, class, inst)
+    return setmetatable({}, {
+        __index = function(_, k)
+            local f = q.field(ns, class, k)
+            if not f then return nil end
+            return patch.get_field_value(f, inst)
+        end,
+        __newindex = function(_, k, v)
+            if v == nil then return end
+            local f = q.field(ns, class, k)
+            if not f then
+                fail(3, "%s 上不存在字段 %s（属性名拼写？）", class, tostring(k))
+            end
+            patch.set_field_value(f, inst, v)
+        end,
+    })
+end
+
+-- mod.quickapi.proxy(ns, class, instance)：手动拿一个字段代理
+function q.proxy(ns, class, instance)
+    return field_proxy(ns, class, instance)
+end
+
+-- 把平铺的属性拆成 { meta = {...}, fields = { 字段名 = 值 } }。
+-- 同时校验字段名，拼错在注册阶段就报错，而不是静默忽略。
+local function split_spec(t, ns, class, meta, label)
+    local spec, fields = {}, {}
+    for k, v in pairs(t) do
+        if meta[k] then
+            spec[k] = v
+        else
+            if type(k) ~= "string" then
+                fail(3, "%s: 属性名必须是字符串", label)
+            end
+            if not q.field(ns, class, k) then
+                fail(3, "%s: %s 上不存在字段 %s", label, class, k)
+            end
+            fields[k] = v
+        end
+    end
+
+    -- 显式写的 defaults 表并进平铺字段
+    if type(spec.defaults) == "table" then
+        for k, v in pairs(spec.defaults) do fields[k] = v end
+    end
+
+    -- 物品的 shoot 支持直接写弹幕名（字符串），运行时解析成 ID
+    local shoot_name
+    if class == "Item" and type(fields.shoot) == "string" then
+        shoot_name = fields.shoot
+        fields.shoot = nil
+    end
+
+    local user_fn = type(spec.defaults) == "function" and spec.defaults or nil
+
+    -- 需要运行时算值（函数 / 弹幕名）时，用函数形式 + 字段代理
+    if user_fn or shoot_name then
+        spec.defaults = function(inst)
+            local item = field_proxy(ns, class, inst)
+            for k, v in pairs(fields) do item[k] = v end
+            if shoot_name then
+                item.shoot = (mod_env.projectile and mod_env.projectile.runtime_id(shoot_name)) or 0
+            end
+            if user_fn then user_fn(item) end
+        end
+    else
+        spec.defaults = fields
+    end
+
+    return spec
+end
+
+-- 注册新物品。返回 runtime_id（内核分配前为 -1），失败返回 nil。
+function q.register_item(t)
+    if type(t) ~= "table" then fail(2, "register_item 需要表参数") end
+    if not t.name then fail(2, "register_item 缺少 name") end
+    return mod_env.item.register(split_spec(t, "Terraria", "Item", ITEM_META,
+            "register_item(" .. tostring(t.name) .. ")"))
+end
+
+-- 注册新弹幕。返回 runtime_id（内核分配前为 -1），失败返回 nil。
+-- 注意：写了 ai 就由 Lua 接管，位移（position += velocity）要自己算，
+--       可用 mod.quickapi.projectile_move(p)。
+function q.register_projectile(t)
+    if type(t) ~= "table" then fail(2, "register_projectile 需要表参数") end
+    if not t.name then fail(2, "register_projectile 缺少 name") end
+    if not mod_env.projectile then
+        fail(2, "当前 LuaLoader / TEFKernel 不支持 mod.projectile，请更新内核与加载器")
+    end
+    return mod_env.projectile.register(split_spec(t, "Terraria", "Projectile",
+            PROJECTILE_META, "register_projectile(" .. tostring(t.name) .. ")"))
+end
+
+-- 取运行时 ID（内核分配后才有效）
+function q.item_id(name)
+    if not mod_env.item then return nil end
+    return mod_env.item.runtime_id(name)
+end
+
+function q.projectile_id(name)
+    if not mod_env.projectile then return nil end
+    return mod_env.projectile.runtime_id(name)
+end
+
+-- ============================ 弹幕 AI 辅助 ============================
+
+-- 向量工具（Terraria 的 Vector2 是内联结构体，走 get_field_vec2）
+local vec = {}
+q.vec = vec
+
+function vec.get(ns, class, field, instance)
+    local f = as_field(ns, class, field)
+    if not f then fail(2, "找不到字段 %s.%s.%s", ns, class, tostring(field)) end
+    return patch.get_field_vec2(f, instance)
+end
+
+function vec.set(ns, class, field, instance, x, y)
+    local f = as_field(ns, class, field)
+    if not f then fail(2, "找不到字段 %s.%s.%s", ns, class, tostring(field)) end
+    return patch.set_field_vec2(f, instance, x, y)
+end
+
+-- 自定义弹幕的「移动」：position += velocity，并可选按速度旋转。
+-- 内核在 Mod 提供 ai 时会跳过原版 AI()，位移必须自己做。
+-- 返回新的 position（x, y）。
+function q.projectile_move(p, opts)
+    opts = opts or {}
+    local px, py = vec.get("Terraria", "Projectile", "position", p)
+    local vx, vy = vec.get("Terraria", "Projectile", "velocity", p)
+    vec.set("Terraria", "Projectile", "position", p, px + vx, py + vy)
+    if opts.face_velocity ~= false then
+        vec.set("Terraria", "Projectile", "rotation", p, math.atan(vy, vx) + math.pi / 2)
+    end
+    return px + vx, py + vy
+end
+
+-- 朝目标转向：保持速率不变，按 rate(0~1) 比例插值方向。
+-- 返回新的 vx, vy。
+function q.projectile_homing(p, tx, ty, rate, max_turn)
+    local px, py = vec.get("Terraria", "Projectile", "position", p)
+    local vx, vy = vec.get("Terraria", "Projectile", "velocity", p)
+    local speed = math.sqrt(vx * vx + vy * vy)
+    if speed < 1e-4 then return vx, vy end
+
+    local dx, dy = tx - px, ty - py
+    local dlen = math.sqrt(dx * dx + dy * dy)
+    if dlen < 1e-3 then return vx, vy end
+
+    -- 当前方向与目标方向的夹角
+    local cur = math.atan(vy, vx)
+    local want = math.atan(dy, dx)
+    local diff = want - cur
+    while diff > math.pi do diff = diff - 2 * math.pi end
+    while diff < -math.pi do diff = diff + 2 * math.pi end
+
+    local turn = diff * (rate or 0.2)
+    if max_turn and math.abs(turn) > max_turn then
+        turn = (turn > 0) and max_turn or -max_turn
+    end
+
+    local a = cur + turn
+    vx, vy = math.cos(a) * speed, math.sin(a) * speed
+    vec.set("Terraria", "Projectile", "velocity", p, vx, vy)
+    return vx, vy
+end
+
+-- 找最近的敌对 NPC（供弹幕追踪用）。range 单位为像素，默认 900。
+-- 返回 npc 句柄、距离；找不到返回 nil。
+function q.find_nearest_npc(p, range)
+    range = range or 900
+    local T_NPC = q.type("Terraria", "NPC")
+    local T_Main = q.type("Terraria", "Main")
+    if not (T_NPC and T_Main) then return nil end
+
+    local npcs = q.get_object("Terraria", "Main", "npc", nil)
+    if not npcs then return nil end
+
+    local px, py = vec.get("Terraria", "Projectile", "position", p)
+    local best, best_d2 = nil, range * range
+    local n = patch.array_length(npcs)
+    for i = 0, n - 1 do
+        local npc = patch.array_at(npcs, i)
+        if npc then
+            local active = q.get_field_value("Terraria", "NPC", "active", npc, "bool")
+            local friendly = q.get_field_value("Terraria", "NPC", "friendly", npc, "bool")
+            local life = q.get_field_value("Terraria", "NPC", "life", npc, "int32")
+            if active and not friendly and life and life > 0 then
+                local nx, ny = vec.get("Terraria", "NPC", "position", npc)
+                local dx, dy = nx - px, ny - py
+                local d2 = dx * dx + dy * dy
+                if d2 < best_d2 then
+                    best, best_d2 = npc, d2
+                end
+            end
+        end
+    end
+    return best, math.sqrt(best_d2)
 end
 
 -- 自动挂到 mod 表，require 之后 mod.quickapi.* 即可用（与直接使用 require 的返回值等价）

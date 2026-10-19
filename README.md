@@ -36,6 +36,8 @@ todo_list = { "setup" }
   - [字段读写](#字段读写)
   - [方法调用](#方法调用)
   - [钩子](#钩子)
+  - [注册物品与弹幕](#注册物品与弹幕)
+  - [弹幕 AI 辅助](#弹幕-ai-辅助)
 - [指定方法重载](#指定方法重载)
 - [缓存、句柄与兼容性](#缓存句柄与兼容性)
 - [对比：用 quickapi 重写一段 Mod](#对比用-quickapi-重写一段-mod)
@@ -183,6 +185,173 @@ mod.quickapi.install_hook("Terraria", "Item", "SetDefaults", {
 local hook = mod.quickapi.install_hook_postfix("Terraria", "Item", "SetDefaults", cb)
 hook:remove()
 ```
+
+## 注册物品与弹幕
+
+写法刻意贴近泰拉瑞亚源码 `Item.SetDefaults` / `Projectile.SetDefaults`：**属性直接平铺在表里**，
+和源码里一行一个 `damage = 25;` 一样，不用再包一层 `defaults`。
+
+```lua
+require("quickapi")
+
+-- 新物品：等价于源码里的 case 分支
+local sword_id = mod.quickapi.register_item{
+    name      = "my_sword",
+    texture   = "sword.png",
+    tooltip   = true,
+    sacrifice = 1,
+    prefixes  = "sword",          -- 声明可重铸类别（不写 = 不可重铸）
+
+    -- ↓↓↓ 这部分就是 Item.SetDefaults 的内容 ↓↓↓
+    damage       = 25,
+    knockBack    = 5.0,
+    width        = 40,
+    height       = 40,
+    useStyle     = 1,
+    useTime      = 20,
+    useAnimation = 20,
+    autoReuse    = true,
+    useTurn      = true,
+    melee        = true,
+    noMelee      = false,
+    rare         = 2,
+    scale        = 1.0,
+    maxStack     = 1,
+    crit         = 4,
+    value        = 50000,
+
+    language  = {
+        en = { name = "My Sword", tooltip = "A test sword." },
+        zh = { name = "我的剑",   tooltip = "一把测试用剑。" },
+    },
+    recipe    = { result = 1, materials = { { id = 9, count = 10 } }, station = 18 },
+}
+
+-- 新弹幕：同样平铺
+local orb_id = mod.quickapi.register_projectile{
+    name    = "my_orb",
+    texture = "orb.png",
+
+    -- ↓↓↓ 这部分就是 Projectile.SetDefaults 的内容 ↓↓↓
+    width        = 16,
+    height       = 16,
+    damage       = 18,
+    knockBack    = 2.0,
+    timeLeft     = 300,
+    penetrate    = 1,
+    maxPenetrate = 1,
+    tileCollide  = false,
+    ignoreWater  = true,
+    friendly     = true,
+    hostile      = false,
+    light        = 0.7,
+    scale        = 1.0,
+
+    ai = function(p)
+        -- 见下一节
+    end,
+}
+```
+
+取运行时 ID（内核分配后才有效）：
+
+```lua
+mod.quickapi.item_id("my_sword")        -- 等价 mod.item.runtime_id
+mod.quickapi.projectile_id("my_orb")    -- 等价 mod.projectile.runtime_id
+```
+
+### 平铺写法 vs defaults 表
+
+两种都可以，平铺优先：
+
+```lua
+-- 推荐：贴源码风格
+mod.quickapi.register_item{ name = "a", damage = 25, useStyle = 1 }
+
+-- 也支持（与 mod.item.register 原生写法一致）
+mod.quickapi.register_item{ name = "b", defaults = { damage = 25, useStyle = 1 } }
+
+-- defaults 写成函数时原样透传（适合运行时算值）
+mod.quickapi.register_item{ name = "c", defaults = function(item) ... end }
+```
+
+**字段名会被校验**：拼错（例如 `useTimee`）会在注册阶段直接报错，不会像原生 API 那样
+只打一条警告然后静默忽略。
+
+### 元字段
+
+以下键不是 Item / Projectile 的字段，quickapi 会把它们原样交给 LuaLoader：
+
+| 类型 | 元字段 |
+|---|---|
+| 物品 | `name` `texture` `tooltip` `sacrifice` `prefixes` `can_use` `language` `recipe` `defaults` |
+| 弹幕 | `name` `texture` `ai` `no_ai` `defaults` |
+
+### 让武器发射自定义弹幕
+
+物品的 `shoot` 支持**直接写弹幕名**，quickapi 会在运行时解析成内核分配的 ID
+（不用自己写 `defaults = function(item)`）：
+
+```lua
+local beam = mod.quickapi.register_projectile{ name = "SwordBeam", texture = "beam.png", ... }
+
+mod.quickapi.register_item{
+    name  = "DiamondSword",
+    melee = true, useStyle = 1,
+
+    shoot      = "SwordBeam",   -- ← 弹幕名，自动解析成 ID
+    shootSpeed = 12.0,
+}
+```
+
+### defaults 函数里用字段代理
+
+`defaults` 写成函数时，回调收到的是**字段代理**，可以按 `Item.SetDefaults` 的写法直接赋值，
+不用记 `mod.patch.set_field_value`：
+
+```lua
+mod.quickapi.register_item{
+    name     = "MySword",
+    damage   = 25,                       -- 平铺属性：注册时定好
+    defaults = function(item)            -- 函数：运行期才能算的再放这里
+        item.shoot      = mod.quickapi.projectile_id("SomeBeam") or 0
+        item.shootSpeed = 12.0
+        item.crit       = item.crit + 6  -- 读也可以
+    end,
+}
+```
+
+也可以手动 `local item = mod.quickapi.proxy("Terraria", "Item", instance)`。
+
+## 弹幕 AI 辅助
+
+写了 `ai` 就由 Lua 接管，内核会**跳过原版 `Projectile.AI()`**。而原版是在 `AI()` 里做
+`position += velocity` 的，所以**位移必须自己算**，否则弹幕会停在原地（看起来像没射出去）。
+
+quickapi 提供了三个小工具：
+
+| 函数 | 说明 |
+|---|---|
+| `projectile_move(p[, opts])` | `position += velocity`，并按速度设置 `rotation`（`opts.face_velocity = false` 可关） |
+| `projectile_homing(p, tx, ty[, rate[, max_turn]])` | 保持速率不变，朝目标转向；`rate` 默认 `0.2` |
+| `find_nearest_npc(p[, range])` | 找最近的敌对 NPC，`range` 默认 900 像素；返回 `npc, 距离` |
+| `vec.get(ns, class, field, instance)` / `vec.set(...)` | 读写 `Vector2` 字段 |
+
+追踪型弹幕：
+
+```lua
+ai = function(p)
+    local npc = mod.quickapi.find_nearest_npc(p, 900)
+    if npc then
+        local nx, ny = mod.quickapi.vec.get("Terraria", "NPC", "position", npc)
+        mod.quickapi.projectile_homing(p, nx, ny, 0.18)
+    end
+    mod.quickapi.projectile_move(p)
+end
+```
+
+> 用 `find_nearest_npc` 而不是鼠标：手机端没有光标，`Main.mouseX/mouseY` 不是
+> "准星位置"，按鼠标追踪在手机上会退化成直线。
 
 ## 指定方法重载
 
