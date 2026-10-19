@@ -456,8 +456,14 @@ function vec.set(ns, class, field, instance, x, y)
     return patch.set_field_vec2(f, instance, x, y)
 end
 
--- 自定义弹幕的「移动」：position += velocity，并可选按速度旋转。
+-- 自定义弹幕的「移动」：position += velocity，并按速度旋转。
 -- 内核在 Mod 提供 ai 时会跳过原版 AI()，位移必须自己做。
+--
+-- opts:
+--   face_velocity    = false 时不做旋转（默认 true）
+--   rotation_offset  = 贴图朝向补偿（弧度，默认 0）
+--                      约定：贴图「朝右（+x）」时用 0；
+--                      贴图「朝上（-y）」时传 math.pi / 2。
 -- 返回新的 position（x, y）。
 function q.projectile_move(p, opts)
     opts = opts or {}
@@ -467,7 +473,7 @@ function q.projectile_move(p, opts)
     if opts.face_velocity ~= false then
         -- rotation 是 float（不是 Vector2），必须用 set_field_value
         q.set_field_value("Terraria", "Projectile", "rotation", p,
-                math.atan(vy, vx) + math.pi / 2, "float")
+                math.atan(vy, vx) + (opts.rotation_offset or 0), "float")
     end
     return px + vx, py + vy
 end
