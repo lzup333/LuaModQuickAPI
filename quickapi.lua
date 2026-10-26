@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.1.0"
+q.version = "1.3.0"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -153,6 +153,197 @@ end
 local function as_field(ns, class, field)
     if is_handle(field) then return field end
     return q.field(ns, class, field)
+end
+
+-- ============================================================================
+-- 实体上下文（Entity Context）—— 写弹幕/物品时不用再碰句柄和字段
+--
+--   local ctx = q.proj(p)
+--   ctx.x, ctx.y = ctx.pos()          -- 读位置
+--   ctx.set_pos(x, y)
+--   ctx.add_vel(dx, dy)
+--   ctx.rot = ctx.vel_angle()         -- 朝速度方向
+--   ctx.ai(0) / ctx.set_ai(0, 12)     -- localAI
+--   if ctx.solid(wx, wy) then ... end
+--   for _, t in ipairs(ctx.players(600)) do ... end   -- t.player, t.dist
+--   ctx.kill()
+-- ============================================================================
+
+local function cached(fn)
+    local v
+    return function() if v == nil then v = fn() end return v end
+end
+
+function q.proj(p)
+    local field_position = q.field("Terraria", "Projectile", "position")
+    local field_velocity = q.field("Terraria", "Projectile", "velocity")
+    local field_rotation = q.field("Terraria", "Projectile", "rotation")
+    local field_local_ai  = q.field("Terraria", "Projectile", "localAI")
+    local field_owner = q.field("Terraria", "Projectile", "owner")
+    local array_mode = mod.patch.field_is_reference(field_local_ai)
+
+    -- 碰撞：优先 SolidTileNoAttach(int,int)（无重载二义），退化到 Tile + SolidTile
+    local method_solid_tile = nil
+    local method_get_tile, method_solid_from_tile
+    local solid_methods_resolved = false
+    local function resolve_solid()
+        if solid_methods_resolved then return end
+        solid_methods_resolved = true
+        method_solid_tile = q.method("Terraria", "WorldGen", "SolidTileNoAttach", 2)
+        if not method_solid_tile then
+            local tile = q.type("Terraria", "Tile")
+            method_get_tile = q.method("Terraria", "Framing", "GetTileSafely", 2)
+            if tile then
+                method_solid_from_tile = q.method("Terraria", "WorldGen", "SolidTile", { types = { tile } })
+            end
+        end
+    end
+
+    local method_kill
+    local function kill_method()
+        if method_kill == nil then method_kill = q.method("Terraria", "Projectile", "Kill", 1) or false end
+        return method_kill or nil
+    end
+
+    local ctx = setmetatable({}, {
+        __index = function(_, k)
+            if k == "rot" then
+                return q.get_field_value("Terraria", "Projectile", "rotation", p, "float") or 0
+            end
+        end,
+        __newindex = function(t, k, v)
+            if k == "rot" then
+                q.set_field_value("Terraria", "Projectile", "rotation", p, v, "float")
+            else
+                rawset(t, k, v)
+            end
+        end,
+    })
+
+    function ctx.pos()
+        local x, y = q.get_field_value("Terraria", "Projectile", "position", p)
+        return x or 0, y or 0
+    end
+    function ctx.set_pos(x, y) mod.patch.set_field_vec2(field_position, p, x, y) end
+    function ctx.vel()
+        local x, y = q.get_field_value("Terraria", "Projectile", "velocity", p)
+        return x or 0, y or 0
+    end
+    function ctx.set_vel(x, y) mod.patch.set_field_vec2(field_velocity, p, x, y) end
+    function ctx.add_vel(dx, dy)
+        local x, y = ctx.vel()
+        ctx.set_vel(x + dx, y + dy)
+    end
+    function ctx.vel_angle()
+        local vx, vy = ctx.vel()
+        return math.atan(vy, vx)
+    end
+    function ctx.owner()
+        return q.get_field_value("Terraria", "Projectile", "owner", p, "int32") or 0
+    end
+
+    -- localAI：PC 是 float[]，PE 是 12 字节内联结构（FFF）
+    local function read_local_ai()
+        if array_mode then
+            local arr = q.get_object("Terraria", "Projectile", "localAI", p)
+            if not arr then return 0, 0, 0 end
+            return mod.patch.array_at(arr, 0, "float") or 0,
+                   mod.patch.array_at(arr, 1, "float") or 0,
+                   mod.patch.array_at(arr, 2, "float") or 0
+        end
+        local raw = mod.patch.get_field_raw(field_local_ai, p, 12)
+        if type(raw) == "string" and #raw == 12 then return string.unpack("fff", raw) end
+        return 0, 0, 0
+    end
+    local function write_local_ai(a, b, c)
+        if array_mode then
+            local arr = q.get_object("Terraria", "Projectile", "localAI", p)
+            if not arr then
+                arr = mod.patch.array_create(3, "float")
+                if arr then mod.patch.set_field_value(field_local_ai, p, arr, "object") end
+                arr = q.get_object("Terraria", "Projectile", "localAI", p)
+            end
+            if arr then
+                mod.patch.array_set(arr, 0, a, "float")
+                mod.patch.array_set(arr, 1, b, "float")
+                mod.patch.array_set(arr, 2, c, "float")
+            end
+        else
+            mod.patch.set_field_raw(field_local_ai, p, string.pack("fff", a, b, c))
+        end
+    end
+
+    function ctx.ai(i)
+        i = i or 0
+        local a, b, c = read_local_ai()
+        return ({a, b, c})[i + 1] or 0
+    end
+    function ctx.set_ai(i, v)
+        i = i or 0
+        local a, b, c = read_local_ai()
+        local t = {a, b, c}
+        t[i + 1] = v
+        write_local_ai(t[1], t[2], t[3])
+    end
+
+    function ctx.solid(wx, wy)
+        resolve_solid()
+        local tx, ty = math.floor(wx / 16), math.floor(wy / 16)
+        if method_solid_tile then
+            local ok, r = pcall(q.call, method_solid_tile, tx, ty)
+            return ok and r == true
+        end
+        if method_get_tile and method_solid_from_tile then
+            local ok1, tile = pcall(q.call, method_get_tile, tx, ty)
+            if ok1 and tile then
+                local ok2, r = pcall(q.call, method_solid_from_tile, tile)
+                return ok2 and r == true
+            end
+        end
+        return false
+    end
+
+    function ctx.players(radius)
+        local out = {}
+        local px, py = ctx.pos()
+        local players = q.get_object("Terraria", "Main", "player")
+        if not players then return out end
+        local n = mod.patch.array_length(players)
+        local r2 = (radius or 0) ^ 2
+        for i = 0, n - 1 do
+            local pl = mod.patch.array_at(players, i)
+            if pl then
+                local active = q.get_field_value("Terraria", "Player", "active", pl, "bool")
+                local dead = q.get_field_value("Terraria", "Player", "dead", pl, "bool")
+                if active and not dead then
+                    local ax, ay = q.get_field_value("Terraria", "Player", "position", pl)
+                    if ax then
+                        local dx, dy = ax - px, ay - py
+                        local d2 = dx * dx + dy * dy
+                        if not radius or d2 <= r2 then
+                            out[#out + 1] = { player = pl, index = i, dist = math.sqrt(d2) }
+                        end
+                    end
+                end
+            end
+        end
+        table.sort(out, function(a, b) return a.dist < b.dist end)
+        return out
+    end
+    function ctx.kill()
+        local m = method_kill()
+        if m then pcall(q.call, m, p) end
+    end
+
+    return ctx
+end
+
+-- Buff 便捷层：按名字施加/查询/移除（内部处理 runtime_id 分配时机）
+function q.buff_apply(player, name, seconds)
+    local id = q.buff_id(name)
+    if not id then return false, "buff not ready" end
+    local left = mod.buff.add(id, player, math.floor((seconds or 5) * 60))
+    return type(left) == "number" and left >= 0, left
 end
 
 -- mod.quickapi.get_field_value(ns, class, field[, instance[, type]])
@@ -303,7 +494,7 @@ function q.install_hook_postfix(ns, class, method, fn, opts)
     return q.install_hook(ns, class, method, with_callback(opts, "postfix", fn))
 end
 
--- ============================ 注册：物品 / 弹幕 ============================
+-- ============================ 注册：物品 / 弹幕 / Buff ============================
 --
 -- 写法刻意贴近泰拉瑞亚源码 Item.SetDefaults / Projectile.SetDefaults：
 -- 属性直接平铺在表里（damage = 25, useStyle = 1, ...），不再包一层 defaults。
@@ -320,16 +511,23 @@ end
 --
 --       language = { en = {...}, zh = {...} },
 --       recipe   = { result = 1, materials = {...}, station = 18 },
+--
+--       use = function(player, item) end,   -- 每次真正使用回调一次（on_use 同义）
 --   }
 
 -- 注册表元字段：这些不是 Item / Projectile 的字段，需要原样交给 LuaLoader
 local ITEM_META = {
     name = true, texture = true, tooltip = true, sacrifice = true,
     defaults = true, prefixes = true, can_use = true, language = true, recipe = true,
+    animation = true,   -- { ticks = 8, frames = 9 }：竖向帧图动画（DrawAnimationVertical）
+    use = true, on_use = true,   -- 每次真正使用回调一次：(player, item)
 }
 
 local PROJECTILE_META = {
     name = true, texture = true, defaults = true, ai = true, no_ai = true,
+    vanilla_ai = true,   -- true = 原版 AI 先跑，再调用 ai（不再跳过原版）
+    frames = true,       -- 竖向帧图帧数（写进 Main.projFrames[type]；0 = 单帧整图）
+    on_kill = true, kill = true,   -- 弹幕被销毁时回调一次：(projectile)
 }
 
 -- 字段代理：instance.damage = 25 直接写到底层对象（源码风格的关键）。
@@ -350,6 +548,66 @@ local function field_proxy(ns, class, inst)
             patch.set_field_value(f, inst, v)
         end,
     })
+end
+
+-- mod.quickapi.projectile_animate(p[, ticks_per_frame])
+-- 帧图推进：frameCounter 计满 ticks 就 frame = (frame+1) % projFrames[type]。
+-- 需要 register_projectile 声明了 frames；在弹幕 ai 回调里每帧调用一次。
+function q.projectile_animate(p, ticks)
+    local t = ticks or 8
+    local fc = (q.get_field_value("Terraria", "Projectile", "frameCounter", p, "int32") or 0) + 1
+    if fc >= t then
+        fc = 0
+        local f = q.get_field_value("Terraria", "Projectile", "frame", p, "int32") or 0
+        local n = 1
+        local arr = q.get_object("Terraria", "Main", "projFrames", nil)
+        if arr then
+            local ty = q.get_field_value("Terraria", "Projectile", "type", p, "int32") or 0
+            n = tonumber(mod.patch.array_at(arr, ty, "int32")) or 1
+        end
+        if n < 1 then n = 1 end
+        q.set_field_value("Terraria", "Projectile", "frame", p, (f + 1) % n, "int32")
+    end
+    q.set_field_value("Terraria", "Projectile", "frameCounter", p, fc, "int32")
+end
+
+-- ============================ 联机同步 ============================
+
+-- mod.quickapi.net_mode() -> 0=单机 1=客户端 2=服务端
+function q.net_mode()
+    if mod.net and mod.net.mode then return mod.net.mode() end
+    return 0
+end
+
+-- mod.quickapi.send_to_server(channel, payload)
+-- 客户端 -> 服务端 RPC；服务端对应 Mod 的 on_receive 会被调用。
+function q.send_to_server(channel, payload)
+    if mod.net and mod.net.send_to_server then
+        mod.net.send_to_server(channel, payload or "")
+    end
+end
+
+-- mod.quickapi.on_server_receive(function(channel, payload, player) end)
+function q.on_server_receive(fn)
+    if mod.net and mod.net.on_receive then
+        mod.net.on_receive(fn)
+    end
+end
+
+-- mod.quickapi.tile_kill(x, y[, no_item])
+-- 客户端请求服务端挖掉一个图格（服务端权威执行并广播给所有人）。
+-- 单机/服务端调用没有意义（本地 KillTile 本身就会同步），可安全调用。
+function q.tile_kill(x, y, no_item)
+    if mod.net and mod.net.tile_kill then
+        mod.net.tile_kill(x, y, no_item or false)
+    end
+end
+
+-- mod.quickapi.tile_square(x, y, w, h)：请求服务端同步一块区域的图格
+function q.tile_square(x, y, w, h)
+    if mod.net and mod.net.tile_square then
+        mod.net.tile_square(x, y, w, h)
+    end
 end
 
 -- mod.quickapi.proxy(ns, class, instance)：手动拿一个字段代理
@@ -415,8 +673,10 @@ function q.register_item(t)
 end
 
 -- 注册新弹幕。返回 runtime_id（内核分配前为 -1），失败返回 nil。
--- 注意：写了 ai 就由 Lua 接管，位移（position += velocity）要自己算，
---       可用 mod.quickapi.projectile_move(p)。
+-- 注意：写了 ai 就由 Lua 接管，位移（position += velocity）要自己算；
+--       若想保留原版 aiStyle，再加 vanilla_ai = true（原版 AI 先跑，ai 后置补充）。
+--       可用 mod.quickapi.projectile_move(p)，或用 q.proj(p) 上下文。
+--       on_kill / kill：(projectile) 在弹幕被销毁时回调一次。
 function q.register_projectile(t)
     if type(t) ~= "table" then fail(2, "register_projectile 需要表参数") end
     if not t.name then fail(2, "register_projectile 缺少 name") end
@@ -425,6 +685,47 @@ function q.register_projectile(t)
     end
     return mod_env.projectile.register(split_spec(t, "Terraria", "Projectile",
             PROJECTILE_META, "register_projectile(" .. tostring(t.name) .. ")"))
+end
+
+-- 注册新 Buff。返回 runtime_id（内核分配前为 -1），失败返回 nil。
+--
+--   mod.quickapi.register_buff{
+--       name       = "my_buff",
+--       texture    = "buff.png",     -- 图标；不放用内核占位图
+--       debuff     = false,          -- 减益：图标红框、优先被顶掉
+--       no_time    = false,          -- 不显示剩余时间
+--       pvp        = false,          -- 仅 PvP 生效
+--       light_pet  = false, vanity_pet = false,   -- 宠物类（同类互斥）
+--       apply  = function(player, time) end,        -- 挂上时
+--       update = function(player, buff_index) end,  -- 每帧，Buff 激活时
+--       language = { en = {name=, description=}, zh = {...} },
+--   }
+--
+-- 注意：原版不认识自定义 type，属性加成/扣血等效果必须写在 update 里。
+--       自定义 Buff 不进原版 .plr，由内核伴生存档 <角色>.plr.tef 存读。
+local BUFF_META = {
+    name = true, texture = true, debuff = true, no_time = true, pvp = true,
+    light_pet = true, vanity_pet = true,
+    apply = true, update = true, language = true,
+}
+
+function q.register_buff(t)
+    if type(t) ~= "table" then fail(2, "register_buff 需要表参数") end
+    if not t.name then fail(2, "register_buff 缺少 name") end
+    if not mod_env.buff then
+        fail(2, "当前 LuaLoader / TEFKernel 不支持 mod.buff，请更新内核与加载器")
+    end
+
+    -- Buff 没有 Terraria.Buff 类型可校验字段，这里只允许上面列出的键，
+    -- 拼错在注册阶段就报错，避免"写了没效果"。
+    local spec = {}
+    for k, v in pairs(t) do
+        if type(k) ~= "string" or not BUFF_META[k] then
+            fail(3, "register_buff(%s): 不认识的属性 %s", tostring(t.name), tostring(k))
+        end
+        spec[k] = v
+    end
+    return mod_env.buff.register(spec)
 end
 
 -- 取运行时 ID（内核分配后才有效）
@@ -436,6 +737,30 @@ end
 function q.projectile_id(name)
     if not mod_env.projectile then return nil end
     return mod_env.projectile.runtime_id(name)
+end
+
+function q.buff_id(name)
+    if not mod_env.buff then return nil end
+    return mod_env.buff.runtime_id(name)
+end
+
+-- 玩家身上某 Buff 的剩余帧数（未挂上返回 0）。走内核自管状态，不读 buffType。
+function q.player_buff_time(player, id)
+    if not player or not id or id < 0 then return 0 end
+    if not mod_env.buff or not mod_env.buff.time then return 0 end
+    return tonumber(mod_env.buff.time(id, player)) or 0
+end
+
+-- 给玩家挂 Buff。time 单位是帧（60 = 1 秒）；已存在时取较长者。
+-- 返回 true/false, 失败原因。
+function q.player_add_buff(player, id, time)
+    if not player or not id or id < 0 then return false, "invalid player/id" end
+    if not mod_env.buff or not mod_env.buff.add then
+        return false, "当前内核不支持自定义 Buff（mod.buff.add）"
+    end
+    local left = mod_env.buff.add(id, player, time)
+    if type(left) ~= "number" or left < 0 then return false, "内核拒绝添加（列表满或 id 无效）" end
+    return true
 end
 
 -- ============================ 弹幕 AI 辅助 ============================

@@ -38,6 +38,10 @@ todo_list = { "setup" }
   - [钩子](#钩子)
   - [注册物品与弹幕](#注册物品与弹幕)
   - [弹幕 AI 辅助](#弹幕-ai-辅助)
+  - [弹幕上下文 q.proj](#弹幕上下文-qproj)
+  - [物品使用与弹幕销毁回调](#物品使用与弹幕销毁回调)
+  - [Buff 便捷层](#buff-便捷层)
+  - [联机与方块辅助](#联机与方块辅助)
 - [指定方法重载](#指定方法重载)
 - [缓存、句柄与兼容性](#缓存句柄与兼容性)
 - [对比：用 quickapi 重写一段 Mod](#对比用-quickapi-重写一段-mod)
@@ -284,8 +288,8 @@ mod.quickapi.register_item{ name = "c", defaults = function(item) ... end }
 
 | 类型 | 元字段 |
 |---|---|
-| 物品 | `name` `texture` `tooltip` `sacrifice` `prefixes` `can_use` `language` `recipe` `defaults` |
-| 弹幕 | `name` `texture` `ai` `no_ai` `defaults` |
+| 物品 | `name` `texture` `tooltip` `sacrifice` `prefixes` `can_use` `use` `on_use` `language` `recipe` `defaults` `animation` |
+| 弹幕 | `name` `texture` `ai` `no_ai` `vanilla_ai` `frames` `on_kill` `kill` `defaults` |
 
 ### 让武器发射自定义弹幕
 
@@ -352,6 +356,118 @@ end
 
 > 用 `find_nearest_npc` 而不是鼠标：手机端没有光标，`Main.mouseX/mouseY` 不是
 > "准星位置"，按鼠标追踪在手机上会退化成直线。
+
+## 弹幕上下文 q.proj
+
+写 AI 时最烦的是反复拼 `get_field_value("Terraria", "Projectile", ...)`。
+`mod.quickapi.proj(p)` 把常用字段包成一个上下文对象：
+
+```lua
+local ctx = mod.quickapi.proj(p)
+
+local x, y = ctx.pos()
+ctx.set_pos(x + 1, y)
+ctx.add_vel(0, 0.2)
+
+ctx.rot = ctx.vel_angle()        -- 朝速度方向（贴图朝右约定）
+ctx.ai(0)                        -- localAI[0]
+ctx.set_ai(1, ctx.ai(1) + 1)     -- localAI[1]
+
+if ctx.solid(wx, wy) then ... end
+
+for _, t in ipairs(ctx.players(600)) do
+    -- t.player / t.index / t.dist
+end
+
+ctx.kill()
+```
+
+| 成员 | 说明 |
+|---|---|
+| `ctx.pos()` / `ctx.set_pos(x, y)` | `position` |
+| `ctx.vel()` / `ctx.set_vel(x, y)` / `ctx.add_vel(dx, dy)` | `velocity` |
+| `ctx.vel_angle()` | 速度方向（弧度，`math.atan(vy, vx)`） |
+| `ctx.rot`（可读写） | `rotation`（float） |
+| `ctx.owner()` | `owner`（玩家索引） |
+| `ctx.ai(i)` / `ctx.set_ai(i, v)` | `localAI[i]`；手机端为数组、PC 端为内联字段，上下文内部已适配 |
+| `ctx.solid(wx, wy)` | 世界坐标是否为实心块（自动选 `SolidTileNoAttach`，退化到 `GetTileSafely` + `SolidTile`） |
+| `ctx.players([radius])` | 附近活着的玩家列表 `{ player, index, dist }`，按距离升序 |
+| `ctx.kill()` | 调用 `Projectile.Kill()` 销毁自身 |
+
+## 物品使用与弹幕销毁回调
+
+四个回调都是**一次性**的，不是每帧：
+
+```lua
+mod.quickapi.register_item{
+    name = "my_charm",
+    use = function(player, item)
+        -- 每次真正使用触发一次（on_use 同义）
+    end,
+}
+
+mod.quickapi.register_projectile{
+    name = "my_orb",
+    on_kill = function(projectile)
+        -- 弹幕被销毁时触发一次（on_kill / kill 同义）：
+        -- 命中、超时、手动 Kill 都会走这里
+    end,
+}
+```
+
+> 物品的 `use` 由内核在 `Player.ItemCheck` 里判定 `itemAnimation == itemAnimationMax` 时触发，
+> 所以一次挥动/吟唱只会回调一次，不会每帧刷。
+
+## Buff 便捷层
+
+```lua
+local id = mod.quickapi.register_buff{
+    name        = "my_buff",
+    texture     = "buff.png",       -- 不放就用内核占位图
+    debuff      = false,            -- 减益：图标红框、不可右键取消、会被护士治疗清除
+    no_time     = false,            -- 不显示剩余时间
+    pvp         = false,
+    light_pet   = false,
+    vanity_pet  = false,
+
+    apply  = function(player, time) end,           -- 挂上时一次
+    update = function(player, buff_index) end,     -- 每帧（效果写这里）
+
+    language = {
+        en = { name = "My Buff", description = "..." },
+        zh = { name = "我的 Buff", description = "..." },
+    },
+}
+
+-- 按名字挂：seconds 单位是秒（内部转帧）
+mod.quickapi.buff_apply(player, "my_buff", 5)
+
+-- 或者自己拿 id：
+local id = mod.quickapi.buff_id("my_buff")
+mod.quickapi.player_add_buff(player, id, 60 * 5)   -- 帧
+mod.quickapi.player_buff_time(player, id)          -- 剩余帧
+```
+
+- `register_buff` 的属性白名单会在注册阶段校验，拼错直接报错；
+- 自定义 Buff 不占用原版 `BuffID`，存档写在 `<角色>.plr.tef`；
+- 属性加成/扣血/召唤等**必须写在 `update` 里**，原版不认识自定义 type。
+
+## 联机与方块辅助
+
+```lua
+mod.quickapi.net_mode()            -- 0 = 单机，1 = 客户端，2 = 服务端
+
+mod.quickapi.send_to_server("my_channel", "payload")   -- 客户端 → 服务端
+
+mod.quickapi.on_server_receive(function(channel, payload, player)
+    -- 服务端收到后广播/执行
+end)
+
+mod.quickapi.tile_kill(x, y[, no_item])   -- 客户端请求服务端挖掉一格
+mod.quickapi.tile_square(x, y, w, h)      -- 请求服务端同步一块区域
+```
+
+单机/服务端调用 `tile_kill` 没有副作用（本地挖掘本身就会同步），可以无脑调用。
 
 ## 指定方法重载
 
@@ -440,6 +556,15 @@ todo_list = { "setup" }
 
 **Q：会不会拖慢每帧的钩子？**
 不会。解析结果被缓存，钩子回调里通常只是一次带缓存的名字查找 + `mod.patch` 调用。
+
+## 更新日志
+
+| 版本 | 内容 |
+|---|---|
+| **1.3.0** | 物品 `use` / `on_use`、弹幕 `on_kill` / `kill` 回调；修正 `q.proj` / `buff_apply` 在源码中的位置（行为不变，纯结构调整） |
+| **1.2.0** | 弹幕上下文 `q.proj`；Buff 便捷层（`register_buff` / `buff_apply` / `buff_id` / `player_add_buff` / `player_buff_time`）；`projectile_animate`；联机与方块辅助（`net_mode` / `send_to_server` / `on_server_receive` / `tile_kill` / `tile_square`） |
+| **1.1.0** | 注册物品 / 弹幕与弹幕 AI 辅助（`projectile_move` / `projectile_homing` / `find_nearest_npc`），`rotation` 改为「贴图朝右」约定 |
+| 1.0.0 | 初版：字段 / 方法 / 钩子的命名空间速查层 |
 
 ## 许可证
 
