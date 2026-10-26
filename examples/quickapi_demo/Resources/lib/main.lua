@@ -57,6 +57,15 @@ function setup()
             q.projectile_move(p)
         end,
 
+        on_hit_npc = function(p, npc, damage, dir, crit)
+            mod.info(("命中 NPC：伤害 %d，暴击 %s"):format(damage, tostring(crit)))
+        end,
+
+        on_tile_collide = function(p, old_vx, old_vy)
+            -- 反弹一次就够，避免贴墙抖动
+            q.proj(p).set_vel(-old_vx * 0.8, -old_vy * 0.8)
+        end,
+
         on_kill = function(p)
             mod.info("演示弹幕已销毁")
         end,

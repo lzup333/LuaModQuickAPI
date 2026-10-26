@@ -39,7 +39,7 @@ todo_list = { "setup" }
   - [注册物品与弹幕](#注册物品与弹幕)
   - [弹幕 AI 辅助](#弹幕-ai-辅助)
   - [弹幕上下文 q.proj](#弹幕上下文-qproj)
-  - [物品使用与弹幕销毁回调](#物品使用与弹幕销毁回调)
+  - [物品使用与弹幕事件回调](#物品使用与弹幕事件回调)
   - [Buff 便捷层](#buff-便捷层)
   - [联机与方块辅助](#联机与方块辅助)
 - [指定方法重载](#指定方法重载)
@@ -394,9 +394,7 @@ ctx.kill()
 | `ctx.players([radius])` | 附近活着的玩家列表 `{ player, index, dist }`，按距离升序 |
 | `ctx.kill()` | 调用 `Projectile.Kill()` 销毁自身 |
 
-## 物品使用与弹幕销毁回调
-
-四个回调都是**一次性**的，不是每帧：
+## 物品使用与弹幕事件回调
 
 ```lua
 mod.quickapi.register_item{
@@ -408,15 +406,33 @@ mod.quickapi.register_item{
 
 mod.quickapi.register_projectile{
     name = "my_orb",
+
+    on_hit_npc = function(projectile, npc, damage, hit_direction, crit)
+        -- 命中 NPC（穿透会按 NPC 逐个回调）
+    end,
+
+    on_hit_player = function(projectile, player, damage, hit_direction, pvp, crit)
+        -- PvP / 敌弹打玩家
+    end,
+
+    on_tile_collide = function(projectile, old_vx, old_vy)
+        -- 撞到实心块；想反弹就自己写回 velocity
+        local ctx = mod.quickapi.proj(projectile)
+        ctx.set_vel(-old_vx * 0.8, -old_vy * 0.8)
+    end,
+
     on_kill = function(projectile)
-        -- 弹幕被销毁时触发一次（on_kill / kill 同义）：
         -- 命中、超时、手动 Kill 都会走这里
     end,
 }
 ```
 
-> 物品的 `use` 由内核在 `Player.ItemCheck` 里判定 `itemAnimation == itemAnimationMax` 时触发，
-> 所以一次挥动/吟唱只会回调一次，不会每帧刷。
+别名：`hit_npc` / `hit_player` / `tile_collide` / `kill`。
+
+- 物品的 `use` 由内核在 `Player.ItemCheck` 里判定 `itemAnimation == itemAnimationMax` 时触发，一次挥动只回调一次；
+- 命中回调来自 `Projectile.Damage()` 内部对 `NPC.StrikeNPC` / `Player.Hurt` 的结算，**不需要手动调 Damage**；
+- 撞墙回调在 `Projectile.HandleMovement` 里判定，发生在伤害结算之前；
+  在回调里 `Kill()` 掉弹幕，本帧就不会再打中 NPC，和原版行为一致。
 
 ## Buff 便捷层
 
@@ -561,6 +577,7 @@ todo_list = { "setup" }
 
 | 版本 | 内容 |
 |---|---|
+| **1.3.1** | 弹幕 `on_hit_npc` / `on_hit_player` / `on_tile_collide` 回调 |
 | **1.3.0** | 物品 `use` / `on_use`、弹幕 `on_kill` / `kill` 回调；修正 `q.proj` / `buff_apply` 在源码中的位置（行为不变，纯结构调整） |
 | **1.2.0** | 弹幕上下文 `q.proj`；Buff 便捷层（`register_buff` / `buff_apply` / `buff_id` / `player_add_buff` / `player_buff_time`）；`projectile_animate`；联机与方块辅助（`net_mode` / `send_to_server` / `on_server_receive` / `tile_kill` / `tile_square`） |
 | **1.1.0** | 注册物品 / 弹幕与弹幕 AI 辅助（`projectile_move` / `projectile_homing` / `find_nearest_npc`），`rotation` 改为「贴图朝右」约定 |

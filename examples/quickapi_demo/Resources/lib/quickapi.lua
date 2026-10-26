@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.3.0"
+q.version = "1.3.1"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -528,6 +528,9 @@ local PROJECTILE_META = {
     vanilla_ai = true,   -- true = 原版 AI 先跑，再调用 ai（不再跳过原版）
     frames = true,       -- 竖向帧图帧数（写进 Main.projFrames[type]；0 = 单帧整图）
     on_kill = true, kill = true,   -- 弹幕被销毁时回调一次：(projectile)
+    on_hit_npc = true, hit_npc = true,             -- 命中 NPC：(projectile, npc, damage, dir, crit)
+    on_hit_player = true, hit_player = true,       -- 命中玩家：(projectile, player, damage, dir, pvp, crit)
+    on_tile_collide = true, tile_collide = true,   -- 撞墙：(projectile, old_vx, old_vy)
 }
 
 -- 字段代理：instance.damage = 25 直接写到底层对象（源码风格的关键）。
@@ -677,6 +680,8 @@ end
 --       若想保留原版 aiStyle，再加 vanilla_ai = true（原版 AI 先跑，ai 后置补充）。
 --       可用 mod.quickapi.projectile_move(p)，或用 q.proj(p) 上下文。
 --       on_kill / kill：(projectile) 在弹幕被销毁时回调一次。
+--       on_hit_npc / on_hit_player：(projectile, target, damage, direction, [pvp,] crit)
+--       on_tile_collide：(projectile, old_vx, old_vy)，想反弹就把 velocity 写回去。
 function q.register_projectile(t)
     if type(t) ~= "table" then fail(2, "register_projectile 需要表参数") end
     if not t.name then fail(2, "register_projectile 缺少 name") end
