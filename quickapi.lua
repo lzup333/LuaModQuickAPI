@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.3.1"
+q.version = "1.3.2"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -523,6 +523,11 @@ local ITEM_META = {
     use = true, on_use = true,   -- 每次真正使用回调一次：(player, item)
 }
 
+local NPC_META = {
+    name = true, texture = true, frames = true, defaults = true, ai = true,
+    vanilla_ai = true,
+}
+
 local PROJECTILE_META = {
     name = true, texture = true, defaults = true, ai = true, no_ai = true,
     vanilla_ai = true,   -- true = 原版 AI 先跑，再调用 ai（不再跳过原版）
@@ -692,6 +697,26 @@ function q.register_projectile(t)
             PROJECTILE_META, "register_projectile(" .. tostring(t.name) .. ")"))
 end
 
+-- 注册新 NPC。返回 runtime_id（内核分配前为 -1），失败返回 nil。
+--
+--   mod.quickapi.register_npc{
+--       name       = "my_slime",
+--       texture    = "slime.png",
+--       frames     = 1,
+--       vanilla_ai = false,              -- true = 原版 AI 先跑，再调 ai
+--       width = 32, height = 32, lifeMax = 100, damage = 10, ...  -- NPC 字段平铺
+--       ai = function(npc) end,
+--   }
+function q.register_npc(t)
+    if type(t) ~= "table" then fail(2, "register_npc 需要表参数") end
+    if not t.name then fail(2, "register_npc 缺少 name") end
+    if not mod_env.npc then
+        fail(2, "当前 LuaLoader / TEFKernel 不支持 mod.npc，请更新内核与加载器")
+    end
+    return mod_env.npc.register(split_spec(t, "Terraria", "NPC", NPC_META,
+            "register_npc(" .. tostring(t.name) .. ")"))
+end
+
 -- 注册新 Buff。返回 runtime_id（内核分配前为 -1），失败返回 nil。
 --
 --   mod.quickapi.register_buff{
@@ -742,6 +767,17 @@ end
 function q.projectile_id(name)
     if not mod_env.projectile then return nil end
     return mod_env.projectile.runtime_id(name)
+end
+
+function q.npc_id(name)
+    if not mod_env.npc then return nil end
+    return mod_env.npc.runtime_id(name)
+end
+
+-- 在世界坐标生成自定义 NPC，返回 Main.npc 下标（失败 nil）
+function q.npc_spawn(name, x, y)
+    if not mod_env.npc then return nil end
+    return mod_env.npc.spawn(name, x, y)
 end
 
 function q.buff_id(name)
