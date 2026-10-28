@@ -16,7 +16,7 @@ require("quickapi")
 mod.meta = { pkg_id = "lzup.lua.example", version = "1.0.0" }
 
 function InvokedLog()
-    mod.info("Terraria.Item.SetDefaults已被调用！")
+    mod.info("Terraria.Item.SetDefaults 已被调用！")
 end
 
 function setup()
@@ -36,16 +36,12 @@ todo_list = { "setup" }
   - [字段读写](#字段读写)
   - [方法调用](#方法调用)
   - [钩子](#钩子)
-  - [注册物品与弹幕](#注册物品与弹幕)
-  - [弹幕 AI 辅助](#弹幕-ai-辅助)
-  - [弹幕上下文 q.proj](#弹幕上下文-qproj)
-  - [物品使用与弹幕事件回调](#物品使用与弹幕事件回调)
-  - [Buff 便捷层](#buff-便捷层)
-  - [联机与方块辅助](#联机与方块辅助)
+- [内容开发指南（推荐学习顺序）](#内容开发指南推荐学习顺序)
 - [指定方法重载](#指定方法重载)
 - [缓存、句柄与兼容性](#缓存句柄与兼容性)
-- [对比：用 quickapi 重写一段 Mod](#对比用-quickapi-重写一段-mod)
+- [联机与方块辅助](#联机与方块辅助)
 - [常见问题](#常见问题)
+- [更新日志](#更新日志)
 - [许可证](#许可证)
 
 ## 为什么不用改 LuaLoader
@@ -190,300 +186,71 @@ local hook = mod.quickapi.install_hook_postfix("Terraria", "Item", "SetDefaults"
 hook:remove()
 ```
 
-## 注册物品与弹幕
+## 内容开发指南（推荐学习顺序）
 
-写法刻意贴近泰拉瑞亚源码 `Item.SetDefaults` / `Projectile.SetDefaults`：**属性直接平铺在表里**，
-和源码里一行一个 `damage = 25;` 一样，不用再包一层 `defaults`。
+内容型 Mod 建议按下面的顺序阅读，每章都有**说明 + 完整示例 + 注意事项**：
+
+| 顺序 | 章节 | 内容 |
+|---|---|---|
+| 1 | [合成](docs/01-recipes.md) | 物品配方、独立配方、材料 / 合成站、生效时机 |
+| 2 | [物品](docs/02-items.md) | 注册、字段、语言、使用回调、发射弹幕、动画 |
+| 3 | [弹幕](docs/03-projectiles.md) | 弹幕 AI 与位移、追踪、命中 / 撞墙 / 销毁回调 |
+| 4 | [Buff](docs/04-buffs.md) | 增益 / 减益、每帧效果、挂上 / 移除、存档规则 |
+| 5 | [NPC](docs/05-npcs.md) | 注册 / 生成、属性、AI 位移、掉落、Boss（实验性） |
+
+索引页见 [docs/README.md](docs/README.md)。
+
+最小组合示例：
 
 ```lua
 require("quickapi")
 
--- 新物品：等价于源码里的 case 分支
-local sword_id = mod.quickapi.register_item{
-    name      = "my_sword",
-    texture   = "sword.png",
-    tooltip   = true,
-    sacrifice = 1,
-    prefixes  = "sword",          -- 声明可重铸类别（不写 = 不可重铸）
+function mod.init()
+    -- 合成
+    mod.quickapi.register_item{
+        name    = "my_dust",
+        texture = "dust.png",
+        maxStack = 999,
+        language = { zh = { name = "魔法尘" } },
+        recipe = {
+            result    = 2,
+            materials = { { id = 23, count = 1 } },   -- 凝胶
+            station   = 18,                           -- 工作台
+        },
+    }
 
-    -- ↓↓↓ 这部分就是 Item.SetDefaults 的内容 ↓↓↓
-    damage       = 25,
-    knockBack    = 5.0,
-    width        = 40,
-    height       = 40,
-    useStyle     = 1,
-    useTime      = 20,
-    useAnimation = 20,
-    autoReuse    = true,
-    useTurn      = true,
-    melee        = true,
-    noMelee      = false,
-    rare         = 2,
-    scale        = 1.0,
-    maxStack     = 1,
-    crit         = 4,
-    value        = 50000,
+    -- 物品
+    mod.quickapi.register_item{
+        name    = "my_sword",
+        texture = "sword.png",
+        damage  = 25, useTime = 20, useStyle = 1,
+        melee   = true, width = 40, height = 40, maxStack = 1,
+    }
 
-    language  = {
-        en = { name = "My Sword", tooltip = "A test sword." },
-        zh = { name = "我的剑",   tooltip = "一把测试用剑。" },
-    },
-    recipe    = { result = 1, materials = { { id = 9, count = 10 } }, station = 18 },
-}
+    -- 弹幕
+    mod.quickapi.register_projectile{
+        name = "my_beam", texture = "beam.png",
+        friendly = true, width = 16, height = 16,
+        damage = 18, timeLeft = 180,
+        ai = function(p) mod.quickapi.projectile_move(p) end,
+    }
 
--- 新弹幕：同样平铺
-local orb_id = mod.quickapi.register_projectile{
-    name    = "my_orb",
-    texture = "orb.png",
+    -- Buff
+    mod.quickapi.register_buff{
+        name = "my_buff", texture = "buff.png",
+        update = function(player) end,
+        language = { zh = { name = "我的 Buff", description = "..." } },
+    }
 
-    -- ↓↓↓ 这部分就是 Projectile.SetDefaults 的内容 ↓↓↓
-    width        = 16,
-    height       = 16,
-    damage       = 18,
-    knockBack    = 2.0,
-    timeLeft     = 300,
-    penetrate    = 1,
-    maxPenetrate = 1,
-    tileCollide  = false,
-    ignoreWater  = true,
-    friendly     = true,
-    hostile      = false,
-    light        = 0.7,
-    scale        = 1.0,
-
-    ai = function(p)
-        -- 见下一节
-    end,
-}
-```
-
-取运行时 ID（内核分配后才有效）：
-
-```lua
-mod.quickapi.item_id("my_sword")        -- 等价 mod.item.runtime_id
-mod.quickapi.projectile_id("my_orb")    -- 等价 mod.projectile.runtime_id
-```
-
-### 平铺写法 vs defaults 表
-
-两种都可以，平铺优先：
-
-```lua
--- 推荐：贴源码风格
-mod.quickapi.register_item{ name = "a", damage = 25, useStyle = 1 }
-
--- 也支持（与 mod.item.register 原生写法一致）
-mod.quickapi.register_item{ name = "b", defaults = { damage = 25, useStyle = 1 } }
-
--- defaults 写成函数时原样透传（适合运行时算值）
-mod.quickapi.register_item{ name = "c", defaults = function(item) ... end }
-```
-
-**字段名会被校验**：拼错（例如 `useTimee`）会在注册阶段直接报错，不会像原生 API 那样
-只打一条警告然后静默忽略。
-
-### 元字段
-
-以下键不是 Item / Projectile 的字段，quickapi 会把它们原样交给 LuaLoader：
-
-| 类型 | 元字段 |
-|---|---|
-| 物品 | `name` `texture` `tooltip` `sacrifice` `prefixes` `can_use` `use` `on_use` `language` `recipe` `defaults` `animation` |
-| 弹幕 | `name` `texture` `ai` `no_ai` `vanilla_ai` `frames` `on_kill` `kill` `defaults` |
-
-### 让武器发射自定义弹幕
-
-物品的 `shoot` 支持**直接写弹幕名**，quickapi 会在运行时解析成内核分配的 ID
-（不用自己写 `defaults = function(item)`）：
-
-```lua
-local beam = mod.quickapi.register_projectile{ name = "SwordBeam", texture = "beam.png", ... }
-
-mod.quickapi.register_item{
-    name  = "DiamondSword",
-    melee = true, useStyle = 1,
-
-    shoot      = "SwordBeam",   -- ← 弹幕名，自动解析成 ID
-    shootSpeed = 12.0,
-}
-```
-
-### defaults 函数里用字段代理
-
-`defaults` 写成函数时，回调收到的是**字段代理**，可以按 `Item.SetDefaults` 的写法直接赋值，
-不用记 `mod.patch.set_field_value`：
-
-```lua
-mod.quickapi.register_item{
-    name     = "MySword",
-    damage   = 25,                       -- 平铺属性：注册时定好
-    defaults = function(item)            -- 函数：运行期才能算的再放这里
-        item.shoot      = mod.quickapi.projectile_id("SomeBeam") or 0
-        item.shootSpeed = 12.0
-        item.crit       = item.crit + 6  -- 读也可以
-    end,
-}
-```
-
-也可以手动 `local item = mod.quickapi.proxy("Terraria", "Item", instance)`。
-
-## 弹幕 AI 辅助
-
-写了 `ai` 就由 Lua 接管，内核会**跳过原版 `Projectile.AI()`**。而原版是在 `AI()` 里做
-`position += velocity` 的，所以**位移必须自己算**，否则弹幕会停在原地（看起来像没射出去）。
-
-quickapi 提供了三个小工具：
-
-| 函数 | 说明 |
-|---|---|
-| `projectile_move(p[, opts])` | `position += velocity`，并按速度设置 `rotation`（`opts.face_velocity = false` 可关） |
-| `projectile_homing(p, tx, ty[, rate[, max_turn]])` | 保持速率不变，朝目标转向；`rate` 默认 `0.2` |
-| `find_nearest_npc(p[, range])` | 找最近的敌对 NPC，`range` 默认 900 像素；返回 `npc, 距离` |
-| `vec.get(ns, class, field, instance)` / `vec.set(...)` | 读写 `Vector2` 字段 |
-
-追踪型弹幕：
-
-```lua
-ai = function(p)
-    local npc = mod.quickapi.find_nearest_npc(p, 900)
-    if npc then
-        local nx, ny = mod.quickapi.vec.get("Terraria", "NPC", "position", npc)
-        mod.quickapi.projectile_homing(p, nx, ny, 0.18)
-    end
-    mod.quickapi.projectile_move(p)
+    -- NPC（实验性）
+    mod.quickapi.register_npc{
+        name = "my_slime", texture = "slime.png",
+        width = 32, height = 32, lifeMax = 100, life = 100,
+        ai = function(npc) end,
+        loot = { { id = 23, count = 1 } },
+    }
 end
 ```
-
-> 用 `find_nearest_npc` 而不是鼠标：手机端没有光标，`Main.mouseX/mouseY` 不是
-> "准星位置"，按鼠标追踪在手机上会退化成直线。
-
-## 弹幕上下文 q.proj
-
-写 AI 时最烦的是反复拼 `get_field_value("Terraria", "Projectile", ...)`。
-`mod.quickapi.proj(p)` 把常用字段包成一个上下文对象：
-
-```lua
-local ctx = mod.quickapi.proj(p)
-
-local x, y = ctx.pos()
-ctx.set_pos(x + 1, y)
-ctx.add_vel(0, 0.2)
-
-ctx.rot = ctx.vel_angle()        -- 朝速度方向（贴图朝右约定）
-ctx.ai(0)                        -- localAI[0]
-ctx.set_ai(1, ctx.ai(1) + 1)     -- localAI[1]
-
-if ctx.solid(wx, wy) then ... end
-
-for _, t in ipairs(ctx.players(600)) do
-    -- t.player / t.index / t.dist
-end
-
-ctx.kill()
-```
-
-| 成员 | 说明 |
-|---|---|
-| `ctx.pos()` / `ctx.set_pos(x, y)` | `position` |
-| `ctx.vel()` / `ctx.set_vel(x, y)` / `ctx.add_vel(dx, dy)` | `velocity` |
-| `ctx.vel_angle()` | 速度方向（弧度，`math.atan(vy, vx)`） |
-| `ctx.rot`（可读写） | `rotation`（float） |
-| `ctx.owner()` | `owner`（玩家索引） |
-| `ctx.ai(i)` / `ctx.set_ai(i, v)` | `localAI[i]`；手机端为数组、PC 端为内联字段，上下文内部已适配 |
-| `ctx.solid(wx, wy)` | 世界坐标是否为实心块（自动选 `SolidTileNoAttach`，退化到 `GetTileSafely` + `SolidTile`） |
-| `ctx.players([radius])` | 附近活着的玩家列表 `{ player, index, dist }`，按距离升序 |
-| `ctx.kill()` | 调用 `Projectile.Kill()` 销毁自身 |
-
-## 物品使用与弹幕事件回调
-
-```lua
-mod.quickapi.register_item{
-    name = "my_charm",
-    use = function(player, item)
-        -- 每次真正使用触发一次（on_use 同义）
-    end,
-}
-
-mod.quickapi.register_projectile{
-    name = "my_orb",
-
-    on_hit_npc = function(projectile, npc, damage, hit_direction, crit)
-        -- 命中 NPC（穿透会按 NPC 逐个回调）
-    end,
-
-    on_hit_player = function(projectile, player, damage, hit_direction, pvp, crit)
-        -- PvP / 敌弹打玩家
-    end,
-
-    on_tile_collide = function(projectile, old_vx, old_vy)
-        -- 撞到实心块；想反弹就自己写回 velocity
-        local ctx = mod.quickapi.proj(projectile)
-        ctx.set_vel(-old_vx * 0.8, -old_vy * 0.8)
-    end,
-
-    on_kill = function(projectile)
-        -- 命中、超时、手动 Kill 都会走这里
-    end,
-}
-```
-
-别名：`hit_npc` / `hit_player` / `tile_collide` / `kill`。
-
-- 物品的 `use` 由内核在 `Player.ItemCheck` 里判定 `itemAnimation == itemAnimationMax` 时触发，一次挥动只回调一次；
-- 命中回调来自 `Projectile.Damage()` 内部对 `NPC.StrikeNPC` / `Player.Hurt` 的结算，**不需要手动调 Damage**；
-- 撞墙回调在 `Projectile.HandleMovement` 里判定，发生在伤害结算之前；
-  在回调里 `Kill()` 掉弹幕，本帧就不会再打中 NPC，和原版行为一致。
-
-## Buff 便捷层
-
-```lua
-local id = mod.quickapi.register_buff{
-    name        = "my_buff",
-    texture     = "buff.png",       -- 不放就用内核占位图
-    debuff      = false,            -- 减益：图标红框、不可右键取消、会被护士治疗清除
-    no_time     = false,            -- 不显示剩余时间
-    pvp         = false,
-    light_pet   = false,
-    vanity_pet  = false,
-
-    apply  = function(player, time) end,           -- 挂上时一次
-    update = function(player, buff_index) end,     -- 每帧（效果写这里）
-
-    language = {
-        en = { name = "My Buff", description = "..." },
-        zh = { name = "我的 Buff", description = "..." },
-    },
-}
-
--- 按名字挂：seconds 单位是秒（内部转帧）
-mod.quickapi.buff_apply(player, "my_buff", 5)
-
--- 或者自己拿 id：
-local id = mod.quickapi.buff_id("my_buff")
-mod.quickapi.player_add_buff(player, id, 60 * 5)   -- 帧
-mod.quickapi.player_buff_time(player, id)          -- 剩余帧
-```
-
-- `register_buff` 的属性白名单会在注册阶段校验，拼错直接报错；
-- 自定义 Buff 不占用原版 `BuffID`，存档写在 `<角色>.plr.tef`；
-- 属性加成/扣血/召唤等**必须写在 `update` 里**，原版不认识自定义 type。
-
-## 联机与方块辅助
-
-```lua
-mod.quickapi.net_mode()            -- 0 = 单机，1 = 客户端，2 = 服务端
-
-mod.quickapi.send_to_server("my_channel", "payload")   -- 客户端 → 服务端
-
-mod.quickapi.on_server_receive(function(channel, payload, player)
-    -- 服务端收到后广播/执行
-end)
-
-mod.quickapi.tile_kill(x, y[, no_item])   -- 客户端请求服务端挖掉一格
-mod.quickapi.tile_square(x, y, w, h)      -- 请求服务端同步一块区域
-```
-
-单机/服务端调用 `tile_kill` 没有副作用（本地挖掘本身就会同步），可以无脑调用。
 
 ## 指定方法重载
 
@@ -512,54 +279,24 @@ mod.quickapi.install_hook_postfix(ns, class, name, cb, { params = {"Type", "vari
 - quickapi 只是 `mod.patch` 的语法糖，两者可任意混用；不使用 quickapi 的 Mod 行为完全不变。
 - `/reload` 热重载会重建 Lua 状态机，quickapi 的缓存随之一并重建，无需手动清理。
 
-## 对比：用 quickapi 重写一段 Mod
-
-裸 `mod.patch` 版（节选自 LuaMods 的 `LuaHealthLock`）：
+## 联机与方块辅助
 
 ```lua
-mod.meta = { pkg_id = "lzup.lua.healthlock", version = "1.0.0" }
+mod.quickapi.net_mode()            -- 0 = 单机，1 = 客户端，2 = 服务端
 
-local stat_life
-local stat_life_max
+mod.quickapi.send_to_server("my_channel", "payload")   -- 客户端 → 服务端
 
-function lock_life(instance)
-    local max = mod.patch.get_field_value(stat_life_max, instance, "int32")
-    mod.patch.set_field_value(stat_life, instance, max, "int32")
-end
+mod.quickapi.on_server_receive(function(channel, payload, player)
+    -- 服务端收到后广播/执行
+end)
 
-function setup()
-    local player = mod.patch.get_type("Terraria", "Player")
-    if not player then return end
-    stat_life = mod.patch.get_field(player, "statLife")
-    stat_life_max = mod.patch.get_field(player, "statLifeMax2")
-    mod.patch.install_hook(mod.patch.get_method(player, "ResetEffects", 0), { postfix = lock_life })
-end
-
-todo_list = { "setup" }
+mod.quickapi.tile_kill(x, y[, no_item])   -- 客户端请求服务端挖掉一格
+mod.quickapi.tile_square(x, y, w, h)      -- 请求服务端同步一块区域
 ```
 
-quickapi 版：
-
-```lua
-require("quickapi")
-mod.meta = { pkg_id = "lzup.lua.healthlock", version = "1.0.0" }
-
-local function lock_life(instance)
-    local max = mod.quickapi.get_field_value("Terraria", "Player", "statLifeMax2", instance, "int32")
-    mod.quickapi.set_field_value("Terraria", "Player", "statLife", instance, max, "int32")
-end
-
-function setup()
-    mod.quickapi.install_hook_postfix("Terraria", "Player", "ResetEffects", lock_life)
-end
-
-todo_list = { "setup" }
-```
+单机/服务端调用 `tile_kill` 没有副作用（本地挖掘本身就会同步），可以无脑调用。
 
 ## 常见问题
-
-**Q：能只改一个字段、不改 Mod 其他部分吗？**
-可以。quickapi 与 `mod.patch` 混用，逐段替换即可。
 
 **Q：`require("quickapi")` 报 module not found？**
 确认 `quickapi.lua` 与入口脚本在**同一目录**（部署后即 `<private_dir>/lib/`）。LuaLoader 会把该目录
@@ -577,9 +314,11 @@ todo_list = { "setup" }
 
 | 版本 | 内容 |
 |---|---|
+| **1.3.3** | 新增 `add_recipe`；NPC 支持 `loot` / `on_death`；补齐五章内容开发文档 |
+| **1.3.2** | 自定义 NPC：`register_npc` / `npc_id` / `npc_spawn` |
 | **1.3.1** | 弹幕 `on_hit_npc` / `on_hit_player` / `on_tile_collide` 回调 |
 | **1.3.0** | 物品 `use` / `on_use`、弹幕 `on_kill` / `kill` 回调；修正 `q.proj` / `buff_apply` 在源码中的位置（行为不变，纯结构调整） |
-| **1.2.0** | 弹幕上下文 `q.proj`；Buff 便捷层（`register_buff` / `buff_apply` / `buff_id` / `player_add_buff` / `player_buff_time`）；`projectile_animate`；联机与方块辅助（`net_mode` / `send_to_server` / `on_server_receive` / `tile_kill` / `tile_square`） |
+| **1.2.0** | 弹幕上下文 `q.proj`；Buff 便捷层（`register_buff` / `buff_apply` / `buff_id` / `player_add_buff` / `player_buff_time`）；`projectile_animate`；联机与方块辅助 |
 | **1.1.0** | 注册物品 / 弹幕与弹幕 AI 辅助（`projectile_move` / `projectile_homing` / `find_nearest_npc`），`rotation` 改为「贴图朝右」约定 |
 | 1.0.0 | 初版：字段 / 方法 / 钩子的命名空间速查层 |
 
