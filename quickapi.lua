@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.3.2"
+q.version = "1.3.3"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -494,6 +494,31 @@ function q.install_hook_postfix(ns, class, method, fn, opts)
     return q.install_hook(ns, class, method, with_callback(opts, "postfix", fn))
 end
 
+-- ============================ 合成 ============================
+--
+-- 与自定义物品无关的独立配方（原版物品、多配方等）。
+--   mod.quickapi.add_recipe{
+--       result    = 22,                              -- 或 { id = 22, count = 3 }
+--       materials = { { id = 9, count = 10 }, ... },
+--       station   = 18,                              -- 工作台 tile id；省略 = 无站点
+--   }
+-- 配方不会立刻生效：内核在下次重建配方表（进世界 / 切语言）时统一写入。
+
+local RECIPE_META = { result = true, materials = true, station = true }
+
+function q.add_recipe(t)
+    if type(t) ~= "table" then fail(2, "add_recipe 需要表参数") end
+    if not mod_env.recipe or type(mod_env.recipe.add) ~= "function" then
+        fail(2, "当前 LuaLoader 不支持 mod.recipe，请更新加载器")
+    end
+    for k in pairs(t) do
+        if type(k) == "string" and not RECIPE_META[k] then
+            fail(3, "add_recipe: 不认识的属性 %s", tostring(k))
+        end
+    end
+    return mod_env.recipe.add(t)
+end
+
 -- ============================ 注册：物品 / 弹幕 / Buff ============================
 --
 -- 写法刻意贴近泰拉瑞亚源码 Item.SetDefaults / Projectile.SetDefaults：
@@ -526,6 +551,7 @@ local ITEM_META = {
 local NPC_META = {
     name = true, texture = true, frames = true, defaults = true, ai = true,
     vanilla_ai = true,
+    loot = true, on_death = true, on_kill = true,   -- 掉落表 / 死亡回调（on_kill 同义）
 }
 
 local PROJECTILE_META = {
