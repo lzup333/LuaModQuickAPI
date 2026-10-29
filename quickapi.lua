@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.3.5"
+q.version = "1.3.6"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -680,32 +680,41 @@ local function split_spec(t, ns, class, meta, label)
         fields.shoot = nil
     end
 
-    -- 物品音效：quickapi 自己写 Item.UseSound，
-    -- 这样旧版 LuaLoader（没有 use_sound 元字段）也能用。
-    local sound_obj
+    -- 物品音效：quickapi 自己写 Item.UseSound（旧版 LuaLoader 也可用）。
+    -- 注意：Android 上 SoundID 的静态字段要等类初始化后才能读到值，
+    -- 所以注册阶段只校验字段存在，真正取值推迟到 defaults 回调里。
+    local sound_name
     if class == "Item" and spec.use_sound ~= nil then
-        local sname = spec.use_sound
+        sound_name = spec.use_sound
         spec.use_sound = nil
-        if type(sname) ~= "string" then
+        if type(sound_name) ~= "string" then
             fail(3, "%s: use_sound 需要 SoundID 字段名（如 \"Item1\"）", label)
         end
-        sound_obj = q.get_object("Terraria.ID", "SoundID", sname)
-        if not sound_obj then
-            fail(3, "%s: SoundID.%s 为 null", label, sname)
+        if not q.field("Terraria.ID", "SoundID", sound_name) then
+            fail(3, "%s: 找不到 SoundID.%s", label, sound_name)
         end
     end
 
+    local sound_obj
     local user_fn = type(spec.defaults) == "function" and spec.defaults or nil
 
     -- 需要运行时算值（函数 / 弹幕名 / 音效）时，用函数形式 + 字段代理
-    if user_fn or shoot_name or sound_obj then
+    if user_fn or shoot_name or sound_name then
         spec.defaults = function(inst)
             local item = field_proxy(ns, class, inst)
             for k, v in pairs(fields) do item[k] = v end
             if shoot_name then
                 item.shoot = (mod_env.projectile and mod_env.projectile.runtime_id(shoot_name)) or 0
             end
-            if sound_obj then item.UseSound = sound_obj end
+            if sound_name then
+                if not sound_obj then
+                    sound_obj = q.get_object("Terraria.ID", "SoundID", sound_name)
+                    if not sound_obj and mod_env.warn then
+                        mod_env.warn("quickapi: SoundID.%s 读取失败，已跳过", sound_name)
+                    end
+                end
+                if sound_obj then item.UseSound = sound_obj end
+            end
             if user_fn then user_fn(item) end
         end
     else
