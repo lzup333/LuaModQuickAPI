@@ -137,11 +137,11 @@ mod.quickapi.register_item{
     name = "my_sword",
     texture = "sword.png",
     useStyle = 1, useTime = 20,
-    use_sound = "Item1",        -- SoundID.Item1，近战挥砍音
+    use_sound = "Item1",        -- SoundID 里的字段名
 }
 ```
 
-- 常用：`"Item1"`（挥砍）、`"Item2"`（枪）、`"Item3"`（魔法）、`"Item4"`（召唤）；
+- `use_sound` 只是 `Terraria.ID.SoundID` 的字段名，具体音色以游戏内实际试听为准；
 - 不写就沿用原版默认（原版 `SetDefaults` 设置的值）；
 - 需要微调音高时再平铺 `useSoundPitch = 0.5` 之类的 `Item` 字段。
 
