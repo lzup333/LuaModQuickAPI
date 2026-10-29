@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.3.3"
+q.version = "1.3.4"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -545,6 +545,7 @@ local ITEM_META = {
     name = true, texture = true, tooltip = true, sacrifice = true,
     defaults = true, prefixes = true, can_use = true, language = true, recipe = true,
     animation = true,   -- { ticks = 8, frames = 9 }：竖向帧图动画（DrawAnimationVertical）
+    use_sound = true,   -- SoundID 里的字段名，例如 "Item1" / "Item2"
     use = true, on_use = true,   -- 每次真正使用回调一次：(player, item)
 }
 

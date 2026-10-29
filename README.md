@@ -314,6 +314,7 @@ mod.quickapi.tile_square(x, y, w, h)      -- 请求服务端同步一块区域
 
 | 版本 | 内容 |
 |---|---|
+| **1.3.4** | 物品 `use_sound`（SoundID 字段名 → `Item.UseSound`）；同步内核最新头文件 |
 | **1.3.3** | 新增 `add_recipe`；NPC 支持 `loot` / `on_death`；补齐五章内容开发文档 |
 | **1.3.2** | 自定义 NPC：`register_npc` / `npc_id` / `npc_spawn` |
 | **1.3.1** | 弹幕 `on_hit_npc` / `on_hit_player` / `on_tile_collide` 回调 |

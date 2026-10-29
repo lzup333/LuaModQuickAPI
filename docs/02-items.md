@@ -60,6 +60,7 @@ mod.quickapi.register_item{
 | `prefixes` | 可重铸类别（例如 `"sword"`）；不写 = 不可重铸 |
 | `can_use` | `function(player, item, ignore_cursed) return true end` |
 | `use` / `on_use` | 每次真正使用触发一次：`function(player, item) end` |
+| `use_sound` | `SoundID` 字段名（如 `"Item1"`），写入 `Item.UseSound` |
 | `language` | 多语言名称/简介，见下 |
 | `animation` | 竖向帧图：`{ ticks = 8, frames = 9 }` |
 | `recipe` | 配方，见 [合成](01-recipes.md) |
@@ -127,8 +128,24 @@ mod.quickapi.register_item{
 
 > 弹幕名必须在物品注册之前已经注册，或者至少在第一次使用前完成注册。
 
-## 动画物品
+## 物品音效
 
+使用 `use_sound` 指定 `Terraria.ID.SoundID` 里的字段名：
+
+```lua
+mod.quickapi.register_item{
+    name = "my_sword",
+    texture = "sword.png",
+    useStyle = 1, useTime = 20,
+    use_sound = "Item1",        -- SoundID.Item1，近战挥砍音
+}
+```
+
+- 常用：`"Item1"`（挥砍）、`"Item2"`（枪）、`"Item3"`（魔法）、`"Item4"`（召唤）；
+- 不写就沿用原版默认（原版 `SetDefaults` 设置的值）；
+- 需要微调音高时再平铺 `useSoundPitch = 0.5` 之类的 `Item` 字段。
+
+## 动画物品
 ```lua
 mod.quickapi.register_item{
     name = "spinning_coin",
