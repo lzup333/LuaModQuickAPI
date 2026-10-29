@@ -142,6 +142,7 @@ mod.quickapi.register_item{
 ```
 
 - `use_sound` 只是 `Terraria.ID.SoundID` 的字段名，具体音色以游戏内实际试听为准；
+- QuickAPI 会自己把它写进 `Item.UseSound`，所以**旧版 LuaLoader 也能用**（不依赖新版原生的 `use_sound`）；
 - 不写就沿用原版默认（原版 `SetDefaults` 设置的值）；
 - 需要微调音高时再平铺 `useSoundPitch = 0.5` 之类的 `Item` 字段。
 

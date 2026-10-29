@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.3.4"
+q.version = "1.3.5"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -680,16 +680,32 @@ local function split_spec(t, ns, class, meta, label)
         fields.shoot = nil
     end
 
+    -- 物品音效：quickapi 自己写 Item.UseSound，
+    -- 这样旧版 LuaLoader（没有 use_sound 元字段）也能用。
+    local sound_obj
+    if class == "Item" and spec.use_sound ~= nil then
+        local sname = spec.use_sound
+        spec.use_sound = nil
+        if type(sname) ~= "string" then
+            fail(3, "%s: use_sound 需要 SoundID 字段名（如 \"Item1\"）", label)
+        end
+        sound_obj = q.get_object("Terraria.ID", "SoundID", sname)
+        if not sound_obj then
+            fail(3, "%s: SoundID.%s 为 null", label, sname)
+        end
+    end
+
     local user_fn = type(spec.defaults) == "function" and spec.defaults or nil
 
-    -- 需要运行时算值（函数 / 弹幕名）时，用函数形式 + 字段代理
-    if user_fn or shoot_name then
+    -- 需要运行时算值（函数 / 弹幕名 / 音效）时，用函数形式 + 字段代理
+    if user_fn or shoot_name or sound_obj then
         spec.defaults = function(inst)
             local item = field_proxy(ns, class, inst)
             for k, v in pairs(fields) do item[k] = v end
             if shoot_name then
                 item.shoot = (mod_env.projectile and mod_env.projectile.runtime_id(shoot_name)) or 0
             end
+            if sound_obj then item.UseSound = sound_obj end
             if user_fn then user_fn(item) end
         end
     else
