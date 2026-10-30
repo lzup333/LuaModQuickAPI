@@ -9,6 +9,10 @@
 
 两种写法最终都会调用 LuaLoader 的 `mod.recipe.add`，行为完全一致。
 
+> 从 **1.4.0** 起，`result` / `materials` 里的 `id` 可以直接写**物品名**（自定义物品的内部名）。
+> QuickAPI 会自动等到内核分配 `runtime_id`，在 `Main.Update` 里提前登记（登记完立即摘钩），
+> 不需要自己写等待钩子。数字 ID 写法和以前完全一样。
+
 ## 1. 物品自带配方
 
 ```lua
@@ -28,6 +32,24 @@ mod.quickapi.register_item{
         result    = 1,                        -- 产物数量（物品本身已经确定）
         materials = { { id = 9, count = 10 } },
         station   = 18,                       -- 18 = 工作台；省略 = 不需要合成站
+    },
+}
+```
+
+材料也可以直接写物品名（自定义物品也行）：
+
+```lua
+mod.quickapi.register_item{
+    name    = "my_sword",
+    texture = "sword.png",
+    -- ...
+    recipe = {
+        result    = 1,
+        materials = {
+            { id = "magic_shard", count = 5 },  -- 本 Mod 自定义物品名，自动等 ID 分配
+            { id = 9, count = 10 },             -- 原版物品用数字 ID（9 = Wood）
+        },
+        station = 18,
     },
 }
 ```
@@ -52,15 +74,28 @@ mod.quickapi.add_recipe{
     materials = { { id = 11, count = 3 } },      -- 11 = 铁矿石
     station   = 17,                              -- 17 = 熔炉
 }
+
+-- 用本 Mod 自定义物品作材料：直接写名字，不用自己等 ID
+mod.quickapi.add_recipe{
+    result    = { id = "magic_sword", count = 1 },
+    materials = {
+        { id = "magic_shard", count = 5 },
+        { id = 9, count = 10 },                   -- 木材仍可混用数字 ID
+    },
+    station = 18,
+}
 ```
 
 ## 参数说明
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `result` | `number` 或 `{ id, count }` | 独立配方里写物品 ID，或 `{ id = 物品ID, count = 数量 }` |
-| `materials` | 数组 | `{ id = 物品ID, count = 数量 }`；至少一项 |
+| `result` | `number` 或 `{ id, count }` | 独立配方里写物品 ID，或 `{ id = 物品ID, count = 数量 }`；`id` 也可以是自定义物品名字符串 |
+| `materials` | 数组 | `{ id = 物品ID/物品名, count = 数量 }`；至少一项 |
 | `station` | `number` | 合成站对应的 **tile ID**；`-1` 或省略表示无站点 |
+
+> `id` 写字符串时，只能是**本 Mod 通过 `register_item` 注册的物品名**（`mod.item.runtime_id(name)` 能解析的内部名）。
+> 原版物品仍然写数字 `ItemID`。
 
 常用 ID（已按 1.4.5.8 源码核对）：
 
@@ -120,9 +155,9 @@ function mod.init()
 end
 ```
 
-> 自定义物品作为**材料**时，注册阶段 `item_id(name)` 还是 `-1`，不能直接写进 `materials`。
-> 请在 ID 分配完成后再调用 `add_recipe`（例如首次进入世界的回调里），或者把配方直接写在
-> 该物品自己的 `register_item{ recipe = ... }` 里。
+> 自定义物品作为**材料**或**产物**时，直接写物品名即可：QuickAPI 会先把配方存起来，
+> 等内核分配完 `runtime_id` 后自动解析并登记（`Main.Update` 提前登记，保证第一次重建配方表就生效）。
+> 也可以把配方写在物品自己的 `register_item{ recipe = ... }` 里，效果一样。
 
 ## 注意事项
 

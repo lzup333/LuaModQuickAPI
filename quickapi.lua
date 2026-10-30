@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.3.6"
+q.version = "1.4.1"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
@@ -496,15 +496,120 @@ end
 
 -- ============================ 合成 ============================
 --
--- 与自定义物品无关的独立配方（原版物品、多配方等）。
+-- 独立配方（原版物品、多配方、以及用自定义物品作材料）。
 --   mod.quickapi.add_recipe{
---       result    = 22,                              -- 或 { id = 22, count = 3 }
---       materials = { { id = 9, count = 10 }, ... },
+--       result    = 22,                              -- 数字 / 名称 / { id=..., count=... }
+--       materials = { { id = 9, count = 10 }, ... }, -- 数字 / 名称都可以
 --       station   = 18,                              -- 工作台 tile id；省略 = 无站点
 --   }
--- 配方不会立刻生效：内核在下次重建配方表（进世界 / 切语言）时统一写入。
+--
+-- id 写字符串时（例如 "MagicShard"）会等到内核分配 runtime_id、
+-- 下一次 Recipe.SetupRecipes 时自动解析；不用自己写钩子等 ID。
+-- 配方仍然是在下次重建配方表（进世界 / 切语言）时生效。
 
 local RECIPE_META = { result = true, materials = true, station = true }
+
+local function recipe_id(v)
+    if type(v) == "number" then
+        return v > 0 and v or nil
+    end
+    if type(v) == "string" and v ~= "" then
+        if mod_env.item and type(mod_env.item.runtime_id) == "function" then
+            local id = mod_env.item.runtime_id(v)
+            if id and id > 0 then return id end
+        end
+    end
+    return nil
+end
+
+local function recipe_result(spec)
+    local r = spec.result or 1
+    if type(r) == "table" then
+        local id = recipe_id(r.id) or recipe_id(r.name) or recipe_id(r.item)
+        return id, math.max(1, math.floor(tonumber(r.count) or 1))
+    end
+    return recipe_id(r), 1
+end
+
+local function recipe_materials(spec)
+    local list = spec.materials
+    if type(list) ~= "table" then return nil end
+    local out = {}
+    for i = 1, #list do
+        local m = list[i]
+        if type(m) == "table" then
+            local id = recipe_id(m.id) or recipe_id(m.name) or recipe_id(m.item)
+            if not id then return nil end   -- 名字还没解析出来，下次再试
+            out[#out + 1] = { id = id, count = math.max(1, math.floor(tonumber(m.count) or 1)) }
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+local pending_recipes = {}
+local recipe_hook
+local update_hook
+
+-- 待解析配方清空后就把钩子摘掉，避免 Main.Update 每帧空跑。
+local function drop_hooks_when_done()
+    if #pending_recipes > 0 then return end
+    if update_hook then
+        local h = update_hook
+        update_hook = nil
+        pcall(function() h:remove() end)
+    end
+    if recipe_hook then
+        local h = recipe_hook
+        recipe_hook = nil
+        pcall(function() h:remove() end)
+    end
+end
+
+local function apply_pending_recipes()
+    if #pending_recipes == 0 then
+        drop_hooks_when_done()
+        return
+    end
+    local remain = {}
+    for i = 1, #pending_recipes do
+        local spec = pending_recipes[i]
+        local rid, rcount = recipe_result(spec)
+        local mats = recipe_materials(spec)
+        if rid and mats then
+            local ok = pcall(mod_env.recipe.add, {
+                result = { id = rid, count = rcount },
+                materials = mats,
+                station = spec.station,
+            })
+            if not ok then remain[#remain + 1] = spec end
+        else
+            remain[#remain + 1] = spec
+        end
+    end
+    pending_recipes = remain
+    drop_hooks_when_done()
+end
+
+local function ensure_recipe_hooks()
+    -- 1) 常规路径：ID 已分配时，在内核重建配方表前登记
+    if not recipe_hook then
+        recipe_hook = q.install_hook_prefix("Terraria", "Recipe", "SetupRecipes",
+                apply_pending_recipes, { argc = 0 })
+    end
+
+    -- 2) 兜底：ID 分配好后的第一帧就登记，避免 SetupRecipes 钩子顺序
+    --    导致第一次重建漏配方。pending 清空后立刻 self-remove。
+    if not update_hook then
+        local ok, h = pcall(q.install_hook_prefix, "Terraria", "Main", "Update",
+                apply_pending_recipes, { argc = 1 })
+        if ok and h then
+            update_hook = h
+        elseif mod_env.warn then
+            mod_env.warn("quickapi: Main.Update 钩子安装失败，配方将只在 SetupRecipes 时登记")
+        end
+    end
+end
 
 function q.add_recipe(t)
     if type(t) ~= "table" then fail(2, "add_recipe 需要表参数") end
@@ -516,7 +621,12 @@ function q.add_recipe(t)
             fail(3, "add_recipe: 不认识的属性 %s", tostring(k))
         end
     end
-    return mod_env.recipe.add(t)
+    pending_recipes[#pending_recipes + 1] = t
+    -- ID 已经可用就直接登记，不装钩子（例如 /reload 后）
+    apply_pending_recipes()
+    if #pending_recipes > 0 then
+        ensure_recipe_hooks()
+    end
 end
 
 -- ============================ 注册：物品 / 弹幕 / Buff ============================
@@ -652,6 +762,31 @@ end
 
 -- 把平铺的属性拆成 { meta = {...}, fields = { 字段名 = 值 } }。
 -- 同时校验字段名，拼错在注册阶段就报错，而不是静默忽略。
+-- recipe 里出现字符串 id（自定义物品名）时，不能走 LuaLoader 的静态
+-- recipe 字段（那时 ID 还是 -1），改由 quickapi 的延迟配方系统登记。
+local function recipe_needs_deferred(recipe)
+    local function is_name(v)
+        return type(v) == "string" and v ~= ""
+    end
+    local r = recipe.result
+    if type(r) == "table" then
+        if is_name(r.id) or is_name(r.name) or is_name(r.item) then return true end
+    elseif is_name(r) then
+        return true
+    end
+    local list = recipe.materials
+    if type(list) == "table" then
+        for i = 1, #list do
+            local m = list[i]
+            if type(m) == "table" and
+                (is_name(m.id) or is_name(m.name) or is_name(m.item)) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function split_spec(t, ns, class, meta, label)
     local spec, fields = {}, {}
     for k, v in pairs(t) do
@@ -671,6 +806,34 @@ local function split_spec(t, ns, class, meta, label)
     -- 显式写的 defaults 表并进平铺字段
     if type(spec.defaults) == "table" then
         for k, v in pairs(spec.defaults) do fields[k] = v end
+    end
+
+    -- register_item 的 recipe 里如果用了自定义物品名，交给延迟配方系统；
+    -- 这样 ID 分配好之后会随 Recipe.SetupRecipes 自动解析。
+    if class == "Item" and type(spec.recipe) == "table" and
+        recipe_needs_deferred(spec.recipe) then
+        local recipe = spec.recipe
+        spec.recipe = nil
+
+        local result_spec
+        if type(recipe.result) == "table" and
+            (recipe.result.id or recipe.result.name or recipe.result.item) then
+            result_spec = recipe.result
+        else
+            local count = 1
+            if type(recipe.result) == "table" then
+                count = tonumber(recipe.result.count) or 1
+            else
+                count = tonumber(recipe.result) or 1
+            end
+            result_spec = { id = t.name, count = count }
+        end
+
+        q.add_recipe{
+            result = result_spec,
+            materials = recipe.materials,
+            station = recipe.station,
+        }
     end
 
     -- 物品的 shoot 支持直接写弹幕名（字符串），运行时解析成 ID
