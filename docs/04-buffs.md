@@ -18,13 +18,14 @@ local id = mod.quickapi.register_buff{
         -- 每帧调用；效果写这里
         local life = mod.quickapi.get_field_value(
             "Terraria", "Player", "statLife", player, "int32")
+        -- statLife 是整数；每帧回复 1 点，避免写入 0.1 后被截断
         mod.quickapi.set_field_value(
-            "Terraria", "Player", "statLife", player, life + 0.1, "int32")
+            "Terraria", "Player", "statLife", player, life + 1, "int32")
     end,
 
     language = {
-        en = { name = "My Regen", description = "+6 life/s" },
-        zh = { name = "我的再生", description = "每秒回复 6 点生命" },
+        en = { name = "My Regen", description = "+60 life/s" },
+        zh = { name = "我的再生", description = "每秒回复 60 点生命" },
     },
 }
 ```
@@ -61,7 +62,7 @@ mod.quickapi.player_buff_time(player, id)          -- 剩余帧，未挂上返�
 mod.buff.remove(id, player)
 ```
 
-- `buff_apply` / `player_add_buff` 返回施加后的剩余帧数，失败返回 `-1`；
+- `buff_apply` 返回 `true, 剩余帧数`，失败返回 `false, 错误信息`；`player_add_buff` 成功返回 `true`，失败返回 `false, 错误信息`。
 - 重复挂同一个 Buff 会刷新时长并再次触发 `apply`。
 
 ## update 的第二个参数

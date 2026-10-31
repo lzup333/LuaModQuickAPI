@@ -39,7 +39,7 @@ local q = {}
 q.version = "1.4.1"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
--- /reload 会重建状态机，缓存随之一并重建，无需手动清理。
+-- LuaLoader 当前没有热重载；重新加载 Mod 后会创建新的状态机，缓存也会随之重建。
 local type_cache = {}
 local member_cache = {}
 local method_cache = {}
@@ -505,7 +505,7 @@ end
 --
 -- id 写字符串时（例如 "MagicShard"）会等到内核分配 runtime_id、
 -- 下一次 Recipe.SetupRecipes 时自动解析；不用自己写钩子等 ID。
--- 配方仍然是在下次重建配方表（进世界 / 切语言）时生效。
+-- 配方的解析和登记由 QuickAPI 负责，具体时机交给内核处理。
 
 local RECIPE_META = { result = true, materials = true, station = true }
 
@@ -592,14 +592,14 @@ local function apply_pending_recipes()
 end
 
 local function ensure_recipe_hooks()
-    -- 1) 常规路径：ID 已分配时，在内核重建配方表前登记
+    -- 1) 常规路径：ID 已分配时，在内核处理配方前登记
     if not recipe_hook then
         recipe_hook = q.install_hook_prefix("Terraria", "Recipe", "SetupRecipes",
                 apply_pending_recipes, { argc = 0 })
     end
 
-    -- 2) 兜底：ID 分配好后的第一帧就登记，避免 SetupRecipes 钩子顺序
-    --    导致第一次重建漏配方。pending 清空后立刻 self-remove。
+    -- 2) 兜底：ID 分配好后尽快登记，避免 SetupRecipes 钩子顺序
+    --    导致配方漏登记。pending 清空后立刻 self-remove。
     if not update_hook then
         local ok, h = pcall(q.install_hook_prefix, "Terraria", "Main", "Update",
                 apply_pending_recipes, { argc = 1 })
@@ -622,7 +622,7 @@ function q.add_recipe(t)
         end
     end
     pending_recipes[#pending_recipes + 1] = t
-    -- ID 已经可用就直接登记，不装钩子（例如 /reload 后）
+    -- ID 已经可用就直接登记，不需要再装等待钩子
     apply_pending_recipes()
     if #pending_recipes > 0 then
         ensure_recipe_hooks()

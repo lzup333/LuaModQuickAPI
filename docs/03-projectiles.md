@@ -44,36 +44,144 @@ local id = mod.quickapi.register_projectile{
 | `on_tile_collide` / `tile_collide` | `function(projectile, old_vx, old_vy) end` |
 | `defaults` | 表或函数，兼容原生写法 |
 
-## AI：位移必须自己算
+## AI：先搞清楚“每帧要做什么”
 
-原版 `Projectile.AI()` 内部会做 `position += velocity`，我们跳过原版后这一步就没了。
-**只改 `velocity` 不写 `position`，弹幕会停在原地。**
+`ai` 不是只执行一次的初始化函数，而是弹幕存在期间**每帧执行一次**的函数。可以把它想成下面这个循环：
 
-```lua
-ai = function(p)
-    mod.quickapi.projectile_move(p)   -- position += velocity，并按速度设置 rotation
-end
+```text
+读取当前状态 → 修改速度/角度 → 移动 → 等下一帧
 ```
 
-`projectile_move(p, opts)`：
+只要自己写了 `ai`，原版的 `Projectile.AI()` 就不会执行。原版 AI 通常会负责重力、碰撞和
+`position += velocity`；这些行为也会一起消失。因此最简单的自定义 AI 至少要调用一次
+`projectile_move(p)`，否则只改 `velocity` 也不会真的移动。
 
-- `opts.face_velocity = false`：只移动，不改 `rotation`（贴图朝右约定）；
-- 需要重力/加速度时，自己改 `velocity` 后再调用。
+### 1. 先让弹幕直线飞
 
-追踪弹幕：
+弹幕的位置是 `position`，速度是 `velocity`。`projectile_move` 会把这一帧的速度加到位置上，
+并默认让贴图朝向飞行方向：
 
 ```lua
 ai = function(p)
-    local npc = mod.quickapi.find_nearest_npc(p, 900)
-    if npc then
-        local nx, ny = mod.quickapi.vec.get("Terraria", "NPC", "position", npc)
-        mod.quickapi.projectile_homing(p, nx, ny, 0.18)
-    end
     mod.quickapi.projectile_move(p)
 end
 ```
 
-`projectile_homing(p, tx, ty, rate, max_turn)` 会在保持速率的前提下转向目标。
+这段代码的效果相当于：
+
+```lua
+-- 伪代码：每帧执行
+position = position + velocity
+rotation = 速度的方向
+```
+
+如果贴图不需要跟着速度旋转，可以关闭自动旋转：
+
+```lua
+ai = function(p)
+    mod.quickapi.projectile_move(p, { face_velocity = false })
+end
+```
+
+贴图默认按“朝右（+x）”处理。贴图朝向不同，可以用 `rotation_offset` 修正，例如贴图朝上时：
+
+```lua
+mod.quickapi.projectile_move(p, { rotation_offset = math.pi / 2 })
+```
+
+### 2. 在移动前改速度
+
+AI 的顺序很重要：先改速度，再移动，当前帧就会使用新速度。
+
+```lua
+ai = function(p)
+    local q = mod.quickapi
+    local vx, vy = q.vec.get("Terraria", "Projectile", "velocity", p)
+
+    vy = vy + 0.15       -- 重力：每帧让下落速度增加一点
+    q.vec.set("Terraria", "Projectile", "velocity", p, vx, vy)
+    q.projectile_move(p)
+end
+```
+
+想让弹幕加速、减速或转弯，基本都是同一个套路：读取 `velocity`，算出新速度，写回去，
+最后调用 `projectile_move`。只改速度、不调用移动函数，位置不会变化。
+
+### 3. 做一个会追踪的弹幕
+
+追踪可以拆成三步：找目标、把目标位置交给转向函数、移动。
+
+```lua
+ai = function(p)
+    local q = mod.quickapi
+    local npc = q.find_nearest_npc(p, 900)  -- 900 是像素范围
+
+    if npc then
+        local x, y = q.vec.get("Terraria", "NPC", "position", npc)
+        q.projectile_homing(p, x, y, 0.18)
+    end
+
+    q.projectile_move(p)
+end
+```
+
+`find_nearest_npc` 只会返回范围内最近的、存活且非友方 NPC；找不到时返回 `nil`。
+`projectile_homing(p, x, y, rate, max_turn)` 会保持原来的速度大小，只改变飞行方向：
+
+- `rate` 是每帧转向的比例。`0.1` 转得慢、轨迹更平滑，`1` 会直接朝向目标；通常从 `0.1 ~ 0.2` 开始调。
+- `max_turn` 是单帧最大转角，单位是弧度。不传时不额外限制，想让追踪更自然时再加上它。
+
+例如限制每帧最多转 0.12 弧度：
+
+```lua
+q.projectile_homing(p, x, y, 0.25, 0.12)
+```
+
+### 4. 用计时器做分阶段 AI
+
+弹幕经常需要“前 30 帧直飞，之后开始追踪”之类的阶段。不要把计时变量放在 `ai` 函数外面，
+否则多个弹幕会共用同一个计时器。可以把计时值放进弹幕自己的 `localAI`：
+
+```lua
+ai = function(p)
+    local q = mod.quickapi
+    local ctx = q.proj(p)
+    local age = ctx.ai(0) + 1
+    ctx.set_ai(0, age)
+
+    if age > 30 then
+        local npc = q.find_nearest_npc(p, 900)
+        if npc then
+            local x, y = q.vec.get("Terraria", "NPC", "position", npc)
+            q.projectile_homing(p, x, y, 0.18)
+        end
+    end
+
+    q.projectile_move(p)
+end
+```
+
+`ctx.ai(0)`、`ctx.ai(1)`、`ctx.ai(2)` 是这个弹幕自己的三个小数计数槽，不同弹幕之间互不共享。
+需要更多状态时，可以把状态编码到这些槽里，或直接读取/写入其他 Projectile 字段。
+
+### 5. 什么时候保留原版 AI
+
+如果只是想在原版移动基础上加一点效果，不必完全接管 AI，可以使用 `vanilla_ai = true`：
+
+```lua
+mod.quickapi.register_projectile{
+    name = "spark",
+    texture = "spark.png",
+    vanilla_ai = true,
+    ai = function(p)
+        -- 原版 AI 已经先处理移动、重力等行为
+        -- 这里写额外效果，例如改旋转或推进帧动画
+        mod.quickapi.projectile_animate(p, 4)
+    end,
+}
+```
+
+需要自己控制完整运动轨迹时，不要同时依赖原版移动和 `projectile_move`，否则弹幕可能一帧移动两次。
 
 ## 弹幕上下文 q.proj
 

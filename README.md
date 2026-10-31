@@ -188,11 +188,11 @@ hook:remove()
 
 ## 内容开发指南（推荐学习顺序）
 
-内容型 Mod 建议按下面的顺序阅读，每章都有**说明 + 完整示例 + 注意事项**：
+如果你是第一次写内容型 Mod，可以按下面的顺序看；已经知道目标的话，直接跳到对应章节即可。
 
 | 顺序 | 章节 | 内容 |
 |---|---|---|
-| 1 | [合成](docs/01-recipes.md) | 物品配方、独立配方、材料 / 合成站、生效时机 |
+| 1 | [合成](docs/01-recipes.md) | 物品配方、独立配方、材料 / 合成站 |
 | 2 | [物品](docs/02-items.md) | 注册、字段、语言、使用回调、发射弹幕、动画 |
 | 3 | [弹幕](docs/03-projectiles.md) | 弹幕 AI 与位移、追踪、命中 / 撞墙 / 销毁回调 |
 | 4 | [Buff](docs/04-buffs.md) | 增益 / 减益、每帧效果、挂上 / 移除、存档规则 |
@@ -277,7 +277,7 @@ mod.quickapi.install_hook_postfix(ns, class, name, cb, { params = {"Type", "vari
   而 **对象实例句柄是借用的**，钩子里的 `instance` / 对象参数**不要跨帧缓存**，要缓存请用
   `mod.patch.retain` 或给钩子加 `{ copy = true }`。
 - quickapi 只是 `mod.patch` 的语法糖，两者可任意混用；不使用 quickapi 的 Mod 行为完全不变。
-- `/reload` 热重载会重建 Lua 状态机，quickapi 的缓存随之一并重建，无需手动清理。
+- LuaLoader 当前没有热重载功能。修改脚本后请按正常流程重新加载 Mod；quickapi 的缓存会随新的 Lua 状态机重新建立。
 
 ## 联机与方块辅助
 

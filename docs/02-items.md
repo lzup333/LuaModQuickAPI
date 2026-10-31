@@ -176,7 +176,10 @@ mod.quickapi.register_item{
 检查 `texture` 文件名和路径（`Resources/Image/` 或 `Resources/lib/Image/`），以及 PNG 是否能正常解码。
 
 **Q：注册成功但物品不在合成表？**
-配方需要重新进世界才会重建；见 [合成](01-recipes.md) 的“生效时机”。
+如果配方不显示，先检查 [合成](01-recipes.md) 中的 `station`、材料 ID 和产物 ID。
 
 **Q：`use` 不触发？**
 确认物品的 `useStyle` / `useTime` / `useAnimation` 是合法组合，并且 `can_use` 返回了 `true`。
+
+**Q：`tooltip` 不显示？**
+看看 `tooltip` 是否设置为了 `true`, 并在 `language` 内写了物品提示
