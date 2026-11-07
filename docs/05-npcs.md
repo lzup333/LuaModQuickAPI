@@ -45,6 +45,7 @@ local id = mod.quickapi.npc_id("my_slime")   -- 注册阶段通常为 -1
 |---|---|
 | `name` | 注册名（必填，同 Mod 内唯一） |
 | `texture` | PNG 文件名；不填用占位贴图 |
+| `boss_head` | Boss 头像 PNG（仅 `boss = true` 用）；不填用克苏鲁之眼头像 |
 | `frames` | 竖向帧图帧数；写入 `Main.npcFrameCount` |
 | `defaults` | 表或函数，兼容原生写法 |
 | `ai` | 每帧 `function(npc) end`；定义后跳过原版 AI |
@@ -78,6 +79,8 @@ mod.quickapi.register_npc{
 ```
 
 `boss = true` 时内核会自动补 `NPCID.Sets.BossHeadTextures`，并启用 Boss 血条/小地图图标。
+指定 `boss_head = "BossHead.png"` 时，该 PNG 会追加到 `TextureAssets.NpcHeadBoss` 并作为这个 Boss 的头像；
+不写则使用默认的克苏鲁之眼头像。
 
 ### AI 与位移
 

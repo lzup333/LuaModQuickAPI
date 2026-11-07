@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.4.1"
+q.version = "1.4.4"
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- LuaLoader 当前没有热重载；重新加载 Mod 后会创建新的状态机，缓存也会随之重建。
@@ -654,14 +654,15 @@ end
 local ITEM_META = {
     name = true, texture = true, tooltip = true, sacrifice = true,
     defaults = true, prefixes = true, can_use = true, language = true, recipe = true,
+    equip = true,        -- { slot = "back"/"front"/..., texture = "...", wing_stats = {...} }
     animation = true,   -- { ticks = 8, frames = 9 }：竖向帧图动画（DrawAnimationVertical）
     use_sound = true,   -- SoundID 里的字段名，例如 "Item1" / "Item2"
     use = true, on_use = true,   -- 每次真正使用回调一次：(player, item)
 }
 
 local NPC_META = {
-    name = true, texture = true, frames = true, defaults = true, ai = true,
-    vanilla_ai = true,
+    name = true, texture = true, boss_head = true, frames = true,
+    defaults = true, ai = true, vanilla_ai = true,
     loot = true, on_death = true, on_kill = true,   -- 掉落表 / 死亡回调（on_kill 同义）
 }
 

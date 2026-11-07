@@ -63,6 +63,7 @@ mod.quickapi.register_item{
 | `use_sound` | `SoundID` 字段名（如 `"Item1"`），写入 `Item.UseSound` |
 | `language` | 多语言名称/简介，见下 |
 | `animation` | 竖向帧图：`{ ticks = 8, frames = 9 }` |
+| `equip` | 外观饰品：`{ slot = "back", texture = "Cape.png", wing_stats = {...} }` |
 | `recipe` | 配方，见 [合成](01-recipes.md) |
 | `defaults` | 表或函数，见上 |
 
@@ -158,6 +159,48 @@ mod.quickapi.register_item{
 
 `texture` 的高度必须能被 `frames` 整除，否则帧会错位。
 
+## 外观饰品
+
+```lua
+mod.quickapi.register_item{
+    name    = "my_cape",
+    texture = "CapeItem.png",          -- 背包里的物品图标
+    equip   = {
+        slot    = "back",              -- back / front / neck / face / handOn / handOff / waist / shield / wing
+        texture = "CapeBack.png",      -- 穿在身上的贴图
+    },
+    accessory = true,
+    maxStack  = 1,
+}
+```
+
+- `equip.slot` 对应 `Item.backSlot / frontSlot / neckSlot / faceSlot / handOnSlot / handOffSlot / waistSlot / shieldSlot / wingSlot`；
+- 内核会追加 `TextureAssets.Acc*` / `TextureAssets.Wings` 槽位并同步 `ArmorIDs.*.Count / Sets / Factory`；
+- 只对外观槽位生效，不影响饰品的属性逻辑；属性仍然用 `defaults` + `equip` 回调。
+- 目前需要新版 TEFKernel + LuaLoader；旧内核会提示槽位预留失败。
+
+### 翅膀属性
+
+自定义 `wing` 槽位默认复制**雏翼**（`CreativeWings`）的 `WingStats`，也可以用
+`equip.wing_stats` 覆盖：
+
+```lua
+equip = {
+    slot    = "wing",
+    texture = "Wings.png",        -- 竖向帧图，高度需能被帧数整除（通常 4～7 帧）
+    wing_stats = {
+        fly_time           = 100, -- 飞行时间（帧）
+        speed              = 6.25,-- 水平飞行速度覆盖
+        acceleration       = 1.0, -- 加速度倍率
+        hover              = false,
+        hover_speed        = 10.0,-- 悬停速度覆盖；-1 = 不覆盖
+        hover_acceleration = 10.0,-- 悬停加速度倍率
+    },
+}
+```
+
+不写 `wing_stats`，或只写其中几项时，未写的项保持雏翼默认值。
+
 ## 注意事项
 
 - **注册阶段返回的 ID 是 `-1`**：内核要等所有 Mod 注册完才分配。需要 ID 时用
@@ -178,8 +221,19 @@ mod.quickapi.register_item{
 **Q：注册成功但物品不在合成表？**
 如果配方不显示，先检查 [合成](01-recipes.md) 中的 `station`、材料 ID 和产物 ID。
 
-**Q：`use` 不触发？**
-确认物品的 `useStyle` / `useTime` / `useAnimation` 是合法组合，并且 `can_use` 返回了 `true`。
+**Q：物品完全无法使用 / `use` 不触发？**
+这是最容易踩的坑之一：只写 `use = function(...) end` 不够，物品本身必须具备可使用的属性。
+至少补上：
+
+```lua
+useStyle     = 1,     -- 没有它，游戏可能根本不进入 UseItem
+useTime      = 20,    -- 0 会导致无法正常开始/结束使用
+useAnimation = 20,
+autoReuse    = true,  -- 可选
+```
+
+另外确认 `can_use` 返回 `true`，并且物品不是通过 `noUseGraphic` / `channel` 等字段被意外限制。
+测试召唤类物品时建议加 `consumable = true`，否则会一直拿在手里反复触发。
 
 **Q：`tooltip` 不显示？**
 看看 `tooltip` 是否设置为了 `true`, 并在 `language` 内写了物品提示
