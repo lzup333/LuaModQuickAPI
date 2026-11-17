@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.5.0"
+q.version = "1.5.1"
 -- 音频：mod.audio（内核 audio_manager）
 q.audio = mod.audio
 
@@ -678,7 +678,7 @@ local NPC_META = {
     name = true, texture = true, boss_head = true, frames = true,
     hit_sound = true, death_sound = true,
     defaults = true, ai = true, vanilla_ai = true,
-    language = true, bestiary = true,              -- 名称与图鉴条目 / 旗帜配置
+    language = true,                              -- 名称（图鉴暂缓）
     loot = true, on_death = true, on_kill = true,   -- 掉落表 / 死亡回调（on_kill 同义）
 }
 

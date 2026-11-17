@@ -52,8 +52,8 @@ local id = mod.quickapi.npc_id("my_slime")   -- 注册阶段通常为 -1
 | `defaults` | 表或函数，兼容原生写法 |
 | `ai` | 每帧 `function(npc) end`；定义后跳过原版 AI |
 | `vanilla_ai` | `true` = 原版 AI 先跑，再调 `ai` |
-| `language` | 本地化名称与图鉴简介：`{ en = { name = "...", bestiary = "..." }, zh = { ... } }` |
-| `bestiary` | 图鉴与旗帜配置，设 `false` 可隐藏；详见下方说明 |
+| `language` | 本地化名称：`{ en = { name = "..." }, zh = { ... } }`（图鉴简介暂缓） |
+| `bestiary` | **暂缓**：图鉴注入当前已移除，传入会被忽略 |
 | `loot` | 死亡掉落表：`{ { id/item = ..., count/min/max = ..., chance = ... }, ... }` |
 | `on_death` / `on_kill` | 死亡回调 `function(npc) end`，先于 `loot` 执行 |
 
