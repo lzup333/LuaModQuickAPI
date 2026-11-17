@@ -197,6 +197,8 @@ hook:remove()
 | 3 | [弹幕](docs/03-projectiles.md) | 弹幕 AI 与位移、追踪、命中 / 撞墙 / 销毁回调 |
 | 4 | [Buff](docs/04-buffs.md) | 增益 / 减益、每帧效果、挂上 / 移除、存档规则 |
 | 5 | [NPC](docs/05-npcs.md) | 注册 / 生成、属性、AI 位移、掉落、Boss（实验性） |
+| 6 | [图格](docs/06-tiles.md) | 注册方块/平台/家具、掉落、光照、小地图与融合 |
+| 7 | [音效](docs/06-audio.md) | 原版 SoundID、NPC 受击/死亡音效、自定义 WAV 音频 |
 
 索引页见 [docs/README.md](docs/README.md)。
 

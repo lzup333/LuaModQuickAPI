@@ -36,7 +36,9 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.4.4"
+q.version = "1.5.0"
+-- 音频：mod.audio（内核 audio_manager）
+q.audio = mod.audio
 
 -- 句柄缓存：类型 / 字段 / 属性 / 方法。句柄在同一个 Lua 状态机内稳定，
 -- LuaLoader 当前没有热重载；重新加载 Mod 后会创建新的状态机，缓存也会随之重建。
@@ -576,11 +578,22 @@ local function apply_pending_recipes()
         local spec = pending_recipes[i]
         local rid, rcount = recipe_result(spec)
         local mats = recipe_materials(spec)
-        if rid and mats then
+        local station_id = spec.station
+        local station_ok = true
+        if type(station_id) == "string" and station_id ~= "" then
+            local resolved = (mod_env.tile and type(mod_env.tile.runtime_id) == "function")
+                    and mod_env.tile.runtime_id(station_id) or nil
+            if resolved and resolved >= 0 then
+                station_id = resolved
+            else
+                station_ok = false
+            end
+        end
+        if rid and mats and station_ok then
             local ok = pcall(mod_env.recipe.add, {
                 result = { id = rid, count = rcount },
                 materials = mats,
-                station = spec.station,
+                station = station_id,
             })
             if not ok then remain[#remain + 1] = spec end
         else
@@ -654,6 +667,7 @@ end
 local ITEM_META = {
     name = true, texture = true, tooltip = true, sacrifice = true,
     defaults = true, prefixes = true, can_use = true, language = true, recipe = true,
+    create_tile = true,-- 可写本 Mod 自定义图格名（运行时解析并写入 Item.createTile）
     equip = true,        -- { slot = "back"/"front"/..., texture = "...", wing_stats = {...} }
     animation = true,   -- { ticks = 8, frames = 9 }：竖向帧图动画（DrawAnimationVertical）
     use_sound = true,   -- SoundID 里的字段名，例如 "Item1" / "Item2"
@@ -662,7 +676,9 @@ local ITEM_META = {
 
 local NPC_META = {
     name = true, texture = true, boss_head = true, frames = true,
+    hit_sound = true, death_sound = true,
     defaults = true, ai = true, vanilla_ai = true,
+    language = true, bestiary = true,              -- 名称与图鉴条目 / 旗帜配置
     loot = true, on_death = true, on_kill = true,   -- 掉落表 / 死亡回调（on_kill 同义）
 }
 
@@ -785,6 +801,7 @@ local function recipe_needs_deferred(recipe)
             end
         end
     end
+    if is_name(recipe.station) then return true end
     return false
 end
 
@@ -807,6 +824,13 @@ local function split_spec(t, ns, class, meta, label)
     -- 显式写的 defaults 表并进平铺字段
     if type(spec.defaults) == "table" then
         for k, v in pairs(spec.defaults) do fields[k] = v end
+    end
+
+    if class == "Item" and spec.create_tile ~= nil then
+        if fields.createTile == nil then
+            fields.createTile = spec.create_tile
+        end
+        spec.create_tile = nil
     end
 
     -- register_item 的 recipe 里如果用了自定义物品名，交给延迟配方系统；
@@ -844,6 +868,13 @@ local function split_spec(t, ns, class, meta, label)
         fields.shoot = nil
     end
 
+    -- 物品的 createTile / create_tile 支持直接写图格名（字符串），运行时解析成 ID
+    local create_tile_name
+    if class == "Item" and type(fields.createTile) == "string" then
+        create_tile_name = fields.createTile
+        fields.createTile = nil
+    end
+
     -- 物品音效：quickapi 自己写 Item.UseSound（旧版 LuaLoader 也可用）。
     -- 注意：Android 上 SoundID 的静态字段要等类初始化后才能读到值，
     -- 所以注册阶段只校验字段存在，真正取值推迟到 defaults 回调里。
@@ -862,13 +893,16 @@ local function split_spec(t, ns, class, meta, label)
     local sound_obj
     local user_fn = type(spec.defaults) == "function" and spec.defaults or nil
 
-    -- 需要运行时算值（函数 / 弹幕名 / 音效）时，用函数形式 + 字段代理
-    if user_fn or shoot_name or sound_name then
+    -- 需要运行时算值（函数 / 弹幕名 / 图格名 / 音效）时，用函数形式 + 字段代理
+    if user_fn or shoot_name or create_tile_name or sound_name then
         spec.defaults = function(inst)
             local item = field_proxy(ns, class, inst)
             for k, v in pairs(fields) do item[k] = v end
             if shoot_name then
                 item.shoot = (mod_env.projectile and mod_env.projectile.runtime_id(shoot_name)) or 0
+            end
+            if create_tile_name then
+                item.createTile = (mod_env.tile and mod_env.tile.runtime_id(create_tile_name)) or -1
             end
             if sound_name then
                 if not sound_obj then
@@ -974,6 +1008,35 @@ function q.register_buff(t)
     return mod_env.buff.register(spec)
 end
 
+-- 注册新图格。返回 runtime_id（内核分配前为 -1），失败返回 nil。
+local TILE_META = {
+    name = true, texture = true, object_style = true,
+    solid = true, solid_top = true, merge_dirt = true, block_light = true, frame_important = true,
+    min_pick = true, mine_resist = true, cut = true, no_fail = true, no_attach = true,
+    table = true, lava_death = true, water_death = true, shine = true, spelunker = true,
+    bouncy = true, blend_all = true, lava_immune_object = true,
+    dust_type = true, hit_sound = true,
+    drop = true, drop_stack = true, on_drop = true,
+    merge_with = true, adj_tiles = true,
+    light = true, map_color = true, language = true,
+}
+
+function q.register_tile(t)
+    if type(t) ~= "table" then fail(2, "register_tile 需要表参数") end
+    if not t.name then fail(2, "register_tile 缺少 name") end
+    if not mod_env.tile or type(mod_env.tile.register) ~= "function" then
+        fail(2, "当前 LuaLoader / TEFKernel 不支持 mod.tile，请更新内核与加载器")
+    end
+    local spec = {}
+    for k, v in pairs(t) do
+        if type(k) ~= "string" or not TILE_META[k] then
+            fail(3, "register_tile(%s): 不认识的属性 %s", tostring(t.name), tostring(k))
+        end
+        spec[k] = v
+    end
+    return mod_env.tile.register(spec)
+end
+
 -- 取运行时 ID（内核分配后才有效）
 function q.item_id(name)
     if not mod_env.item then return nil end
@@ -999,6 +1062,17 @@ end
 function q.buff_id(name)
     if not mod_env.buff then return nil end
     return mod_env.buff.runtime_id(name)
+end
+
+function q.tile_id(a, b)
+    if not mod_env.tile or type(mod_env.tile.runtime_id) ~= "function" then return nil end
+    if b ~= nil then return mod_env.tile.runtime_id(a, b) end
+    return mod_env.tile.runtime_id(a)
+end
+
+function q.set_tile_merge(a, b, merge)
+    if not mod_env.tile or type(mod_env.tile.set_merge) ~= "function" then return false end
+    return mod_env.tile.set_merge(a, b, merge)
 end
 
 -- 玩家身上某 Buff 的剩余帧数（未挂上返回 0）。走内核自管状态，不读 buffType。

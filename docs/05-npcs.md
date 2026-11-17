@@ -1,7 +1,7 @@
 # NPC
 
-> 第 5 章。**NPC 目前是实验性功能**：核心的注册、生成、AI、掉落、Boss 血条已经可用，
-> 但名称/图鉴、城镇 NPC（对话、商店、幸福度）、联机同步还没有完整适配。
+> 第 5 章。**NPC 目前是实验性功能**：核心的注册、生成、AI、掉落、名称/图鉴、Boss 血条已经可用，
+> 但城镇 NPC（对话、商店、幸福度）、联机同步还没有完整适配。
 
 `mod.quickapi.register_npc` 和物品/弹幕一样：**NPC 字段直接平铺**，`ai` 一旦写了就接管原版 AI。
 
@@ -46,11 +46,15 @@ local id = mod.quickapi.npc_id("my_slime")   -- 注册阶段通常为 -1
 | `name` | 注册名（必填，同 Mod 内唯一） |
 | `texture` | PNG 文件名；不填用占位贴图 |
 | `boss_head` | Boss 头像 PNG（仅 `boss = true` 用）；不填用克苏鲁之眼头像 |
+| `hit_sound` | 受击音效，SoundID 字段名（如 `"NPCHit1"`） |
+| `death_sound` | 死亡音效，SoundID 字段名（如 `"NPCDeath1"`） |
 | `frames` | 竖向帧图帧数；写入 `Main.npcFrameCount` |
 | `defaults` | 表或函数，兼容原生写法 |
 | `ai` | 每帧 `function(npc) end`；定义后跳过原版 AI |
 | `vanilla_ai` | `true` = 原版 AI 先跑，再调 `ai` |
-| `loot` | 死亡掉落表：`{ { id = 物品ID, count = 数量 }, ... }` |
+| `language` | 本地化名称与图鉴简介：`{ en = { name = "...", bestiary = "..." }, zh = { ... } }` |
+| `bestiary` | 图鉴与旗帜配置，设 `false` 可隐藏；详见下方说明 |
+| `loot` | 死亡掉落表：`{ { id/item = ..., count/min/max = ..., chance = ... }, ... }` |
 | `on_death` / `on_kill` | 死亡回调 `function(npc) end`，先于 `loot` 执行 |
 
 其余键都当作 `Terraria.NPC` 字段，例如 `lifeMax / life / damage / defense / boss /
@@ -123,7 +127,22 @@ mod.quickapi.register_npc{
     friendly = false,
 
     loot = {
-        { id = 23, count = 3 },   -- 23 = 凝胶
+        { id = 23, count = 3 },                             -- 原版凝胶 x3（必掉）
+        { item = "slime_essence", min = 1, max = 2, chance = 0.5 }, -- 自定义物品 50% 掉 1~2 个
+    },
+
+    language = {
+        en = { name = "Loot Slime", bestiary = "Drops extra treasures." },
+        zh = { name = "宝藏史莱姆", bestiary = "会掉落额外战利品。" },
+    },
+
+    bestiary = {
+        kind            = "enemy",    -- "enemy" | "critter" | "town"
+        stars           = 2,          -- 稀有度星级 1..5
+        quick_unlock    = false,      -- true：击杀 1 次即可解锁全部图鉴信息
+        tags            = { "Forest", "DayTime" }, -- SpawnConditions 字段名
+        banner_item     = "slime_banner",          -- 旗帜物品 id 或本 Mod 物品名
+        kills_to_banner = 50,
     },
 
     on_death = function(npc)
@@ -133,9 +152,9 @@ mod.quickapi.register_npc{
 }
 ```
 
-- `loot` 在 NPC 死亡时按尸体中心掉落；
+- `loot` 在 NPC 死亡时按尸体中心掉落，支持 `id` / `item`（原版 ID 或本 Mod 物品名）、`count` / `min` / `max` 和 `chance`（`0..1`）；
 - `on_death`（`on_kill` 同义）先执行，可在里面再调 `mod.npc.drop_item(id, x, y, count)`；
-- 掉落的是原版/已注册物品 ID，不要写物品名字。
+- 默认会把 `loot` 一并注册到图鉴掉落列表，如需隐藏可设 `bestiary.include_loot = false`。
 
 ## 完整示例
 
@@ -189,7 +208,6 @@ end
 ## 注意事项
 
 - **实验性**：以下能力还没有完整支持，正式模组请谨慎使用：
-  - 名称/图鉴：手机端 `Lang.GetNPCName` 的 const 守卫导致自定义名字取不到；
   - 城镇 NPC：商店、幸福度、入住条件没有适配，`townNPC = true` 可能触发原版越界；
   - 联机：没有 `SyncNPC` / 自定义 AI 包同步。
 - **ID 不要硬编码**：注册阶段 `npc_id()` 可能返回 `-1`，生成时用名字 `npc_spawn(name, x, y)`。
@@ -210,5 +228,5 @@ end
 确认内核是较新版本（掉落使用 `Item.NewItem`，旧内核可能缺少导出符号）；并把日志里的
 `npc drop` / `CRITICAL` 段发给开发者。
 
-**Q：NPC 没有名字 / 图鉴？**
-目前是已知限制，等 NPC 模块转正后补。
+**Q：NPC 图鉴不显示或名字显示异常？**
+请确认填写了 `language = { en = { name = "...", bestiary = "..." }, zh = { ... } }`，且图鉴相关内容需使用支持图鉴与 `Lang.GetNPCName` 补丁的新版 TEFKernel 与 LuaLoader；若不想加入图鉴，可设 `bestiary = false`。
