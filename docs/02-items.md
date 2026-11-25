@@ -13,8 +13,6 @@ require("quickapi")
 local id = mod.quickapi.register_item{
     name    = "my_sword",
     texture = "sword.png",
-    width   = 40,
-    height  = 40,
     damage  = 25,
     useTime = 20,
     useStyle = 1,       -- 1 = 挥砍
@@ -26,6 +24,9 @@ local id = mod.quickapi.register_item{
 - `name` 必填，同一个 Mod 内唯一；
 - `texture` 是 PNG 文件名，放在 `Resources/Image/` 或 `Resources/lib/Image/`；
 - 其余键就是 `Terraria.Item` 的字段（见 `Item.SetDefaults`）。
+
+> **1.4.6 注意**：`Item.width` / `Item.height` 已被原版移除，物品不再用这两个字段控制尺寸。
+> QuickAPI 1.5.2 起会自动忽略它们（1.4.5.8 上仍然生效），不需要为了兼容再删代码。
 
 ## 平铺写法 vs defaults 表
 

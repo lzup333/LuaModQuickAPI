@@ -75,7 +75,6 @@ function setup()
         name = "demo_charm",
         tooltip = true,
 
-        width = 24, height = 24,
         useStyle = 1, useTime = 20, useAnimation = 20, maxStack = 1,
         shoot = "demo_orb", shootSpeed = 10.0,
 

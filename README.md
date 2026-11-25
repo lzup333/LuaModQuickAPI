@@ -226,7 +226,7 @@ function mod.init()
         name    = "my_sword",
         texture = "sword.png",
         damage  = 25, useTime = 20, useStyle = 1,
-        melee   = true, width = 40, height = 40, maxStack = 1,
+        melee   = true, maxStack = 1,
     }
 
     -- 弹幕
@@ -316,6 +316,7 @@ mod.quickapi.tile_square(x, y, w, h)      -- 请求服务端同步一块区域
 
 | 版本 | 内容 |
 |---|---|
+| **1.5.2** | 1.4.6 兼容：`Item.width` / `Item.height` 已被原版移除，`register_item`（平铺字段、`defaults` 表、`defaults` 函数）会自动忽略这两个字段并只提示一次；1.4.5.8 上行为不变 |
 | **1.4.1** | 自定义物品配方改在 `Main.Update` 提前登记，避免 `SetupRecipes` 钩子顺序导致第一次进世界漏配方；解析完自动摘钩，不会每帧常驻 |
 | **1.4.0** | 配方支持用**物品名**写结果/材料（自动等 runtime_id 分配后在 `Recipe.SetupRecipes` 解析），`register_item` 的 `recipe` 同样可用自定义物品名 |
 | **1.3.6** | `use_sound` 延迟到 defaults 回调读取 SoundID，修复 Android 上静态类未初始化导致 null |

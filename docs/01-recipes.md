@@ -23,7 +23,6 @@ mod.quickapi.register_item{
     damage  = 25,
     useTime = 20,
     melee   = true,
-    width   = 40, height = 40,
     maxStack = 1,
 
     -- 1 把 my_sword = 10 个木材，站在工作台旁合成

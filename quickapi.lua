@@ -36,7 +36,7 @@ if type(patch) ~= "table" then
 end
 
 local q = {}
-q.version = "1.5.1"
+q.version = "1.5.2"
 -- 音频：mod.audio（内核 audio_manager）
 q.audio = mod.audio
 
@@ -57,6 +57,21 @@ end
 
 local function fail(level, fmt, ...)
     error("quickapi: " .. string.format(fmt, ...), level)
+end
+
+-- 1.4.6：Item.width / Item.height 已被删除。旧 Mod 里的这两个字段不再报错，
+-- 而是按“已废弃字段”忽略；1.4.5.8 上字段仍然存在，照常写入。
+local warned_item_size_removed = false
+local function is_removed_item_size_field(class, name)
+    return class == "Item" and (name == "width" or name == "height")
+end
+
+local function warn_item_size_removed()
+    if warned_item_size_removed then return end
+    warned_item_size_removed = true
+    if mod_env.warn then
+        mod_env.warn("quickapi: 1.4.6 起 Item 已移除 width/height，相关设置会被忽略（1.4.5.8 仍然有效）")
+    end
 end
 
 -- 沿父类链查找成员：命中返回句柄，找不到返回 nil
@@ -655,7 +670,7 @@ end
 --       prefixes = "sword",
 --
 --       damage = 25, useTime = 20, useStyle = 1, autoReuse = true,
---       width = 40, height = 40, melee = true, rare = 2, maxStack = 1,
+--       melee = true, rare = 2, maxStack = 1,  -- 1.4.6 起 Item 不再有 width/height
 --
 --       language = { en = {...}, zh = {...} },
 --       recipe   = { result = 1, materials = {...}, station = 18 },
@@ -705,6 +720,10 @@ local function field_proxy(ns, class, inst)
             if v == nil then return end
             local f = q.field(ns, class, k)
             if not f then
+                if is_removed_item_size_field(class, k) then
+                    warn_item_size_removed()
+                    return
+                end
                 fail(3, "%s 上不存在字段 %s（属性名拼写？）", class, tostring(k))
             end
             patch.set_field_value(f, inst, v)
@@ -814,16 +833,28 @@ local function split_spec(t, ns, class, meta, label)
             if type(k) ~= "string" then
                 fail(3, "%s: 属性名必须是字符串", label)
             end
-            if not q.field(ns, class, k) then
-                fail(3, "%s: %s 上不存在字段 %s", label, class, k)
+            local f = q.field(ns, class, k)
+            if not f then
+                if is_removed_item_size_field(class, k) then
+                    warn_item_size_removed()
+                else
+                    fail(3, "%s: %s 上不存在字段 %s", label, class, k)
+                end
+            else
+                fields[k] = v
             end
-            fields[k] = v
         end
     end
 
     -- 显式写的 defaults 表并进平铺字段
     if type(spec.defaults) == "table" then
-        for k, v in pairs(spec.defaults) do fields[k] = v end
+        for k, v in pairs(spec.defaults) do
+            if is_removed_item_size_field(class, k) and not q.field(ns, class, k) then
+                warn_item_size_removed()
+            else
+                fields[k] = v
+            end
+        end
     end
 
     if class == "Item" and spec.create_tile ~= nil then
